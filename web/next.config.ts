@@ -1,7 +1,8 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // Externalize packages that use native code or have bundling issues
+  serverExternalPackages: ['potrace', 'sharp'],
 };
 
 export default nextConfig;

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
-import * as potrace from 'potrace';
+// Use require for potrace to avoid ESM issues
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const potrace = require('potrace');
 import { optimize, type Config } from 'svgo';
 
 // Potrace parameters optimized for logo/typeface vectorization
@@ -78,7 +80,14 @@ export async function POST(request: NextRequest) {
   try {
     console.log('[SVG API] Starting conversion...');
     
-    const body = await request.json();
+    let body;
+    try {
+      body = await request.json();
+    } catch (parseError) {
+      console.error('[SVG API] JSON parse error:', parseError);
+      return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+    }
+    
     const { imageData, originalWidth, originalHeight } = body;
 
     if (!imageData) {
@@ -94,49 +103,80 @@ export async function POST(request: NextRequest) {
       ? imageData.split(',')[1] 
       : imageData;
     
-    const inputBuffer = Buffer.from(base64Data, 'base64');
+    let inputBuffer: Buffer;
+    try {
+      inputBuffer = Buffer.from(base64Data, 'base64');
+    } catch (bufferError) {
+      console.error('[SVG API] Buffer error:', bufferError);
+      return NextResponse.json({ error: 'Invalid base64 data' }, { status: 400 });
+    }
     console.log('[SVG API] Input buffer size:', inputBuffer.length);
 
     // Get original image dimensions
     console.log('[SVG API] Getting image metadata...');
-    const metadata = await sharp(inputBuffer).metadata();
+    let metadata;
+    try {
+      metadata = await sharp(inputBuffer).metadata();
+    } catch (metaError) {
+      console.error('[SVG API] Metadata error:', metaError);
+      return NextResponse.json({ error: 'Failed to read image metadata' }, { status: 400 });
+    }
     const imgWidth = originalWidth || metadata.width || 1024;
     const imgHeight = originalHeight || metadata.height || 1024;
     console.log('[SVG API] Dimensions:', imgWidth, 'x', imgHeight);
 
     // === PREPROCESSING WITH SHARP ===
     console.log('[SVG API] Preprocessing with Sharp...');
-    const preprocessedBuffer = await sharp(inputBuffer)
-      .flatten({ background: { r: 255, g: 255, b: 255 } })
-      .grayscale()
-      .threshold(128)
-      .resize({
-        width: imgWidth * 2,
-        height: imgHeight * 2,
-        kernel: sharp.kernel.lanczos3,
-      })
-      .png()
-      .toBuffer();
+    let preprocessedBuffer: Buffer;
+    try {
+      preprocessedBuffer = await sharp(inputBuffer)
+        .flatten({ background: { r: 255, g: 255, b: 255 } })
+        .grayscale()
+        .threshold(128)
+        .resize({
+          width: imgWidth * 2,
+          height: imgHeight * 2,
+          kernel: sharp.kernel.lanczos3,
+        })
+        .png()
+        .toBuffer();
+    } catch (sharpError) {
+      console.error('[SVG API] Sharp error:', sharpError);
+      return NextResponse.json({ error: 'Image preprocessing failed' }, { status: 500 });
+    }
     console.log('[SVG API] Preprocessed buffer size:', preprocessedBuffer.length);
 
     // === VECTORIZATION WITH POTRACE ===
     console.log('[SVG API] Vectorizing with Potrace...');
-    const svgString = await new Promise<string>((resolve, reject) => {
-      potrace.trace(preprocessedBuffer, POTRACE_OPTIONS, (err: Error | null, svg: string) => {
-        if (err) {
-          console.error('[SVG API] Potrace error:', err);
-          reject(err);
-        } else {
-          console.log('[SVG API] Potrace success, SVG length:', svg?.length);
-          resolve(svg);
-        }
+    let svgString: string;
+    try {
+      svgString = await new Promise<string>((resolve, reject) => {
+        potrace.trace(preprocessedBuffer, POTRACE_OPTIONS, (err: Error | null, svg: string) => {
+          if (err) {
+            console.error('[SVG API] Potrace callback error:', err);
+            reject(err);
+          } else {
+            console.log('[SVG API] Potrace success, SVG length:', svg?.length);
+            resolve(svg);
+          }
+        });
       });
-    });
+    } catch (potraceError) {
+      console.error('[SVG API] Potrace error:', potraceError);
+      return NextResponse.json({ error: 'Vectorization failed' }, { status: 500 });
+    }
 
     // === OPTIMIZATION WITH SVGO ===
     console.log('[SVG API] Optimizing with SVGO...');
-    const optimizedResult = optimize(svgString, SVGO_CONFIG);
-    let finalSvg = optimizedResult.data;
+    let finalSvg: string;
+    try {
+      const optimizedResult = optimize(svgString, SVGO_CONFIG);
+      finalSvg = optimizedResult.data;
+    } catch (svgoError) {
+      console.error('[SVG API] SVGO error:', svgoError);
+      // If optimization fails, use the unoptimized SVG
+      finalSvg = svgString;
+    }
     console.log('[SVG API] Optimized SVG length:', finalSvg.length);
 
     // === ILLUSTRATOR COMPATIBILITY ADJUSTMENTS ===
@@ -151,9 +191,11 @@ export async function POST(request: NextRequest) {
     });
 
   } catch (error: unknown) {
-    console.error('[SVG API] Error caught:', error);
+    console.error('[SVG API] Unexpected error:', error);
     console.error('[SVG API] Error type:', typeof error);
-    console.error('[SVG API] Error constructor:', error?.constructor?.name);
+    if (error && typeof error === 'object') {
+      console.error('[SVG API] Error keys:', Object.keys(error));
+    }
     const errorMessage = error && typeof error === 'object' && 'message' in error 
       ? String((error as { message: unknown }).message) 
       : 'Conversion failed';

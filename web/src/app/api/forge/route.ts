@@ -529,22 +529,34 @@ Be precise. Measure carefully. Return ONLY the JSON.`;
   return getDefaultDNA(scriptType);
 }
 
+// Helper to merge objects while filtering out undefined values
+function mergeWithDefaults<T extends Record<string, unknown>>(defaults: T, overrides?: Partial<T>): T {
+  if (!overrides) return defaults;
+  const result = { ...defaults };
+  for (const key of Object.keys(overrides) as Array<keyof T>) {
+    if (overrides[key] !== undefined) {
+      result[key] = overrides[key] as T[keyof T];
+    }
+  }
+  return result;
+}
+
 function validateAndFillDNA(data: Partial<MathematicalDNA>, scriptType: ScriptType = 'latin'): MathematicalDNA {
   const defaults = getDefaultDNA(scriptType);
   
   const result: MathematicalDNA = {
     scriptType: data.scriptType || scriptType,
-    metrics: { ...defaults.metrics, ...data.metrics },
-    stroke: { ...defaults.stroke, ...data.stroke },
-    geometry: { ...defaults.geometry, ...data.geometry },
-    terminals: { ...defaults.terminals, ...data.terminals },
-    spacing: { ...defaults.spacing, ...data.spacing },
-    proportions: { ...defaults.proportions, ...data.proportions },
-    features: { ...defaults.features, ...data.features },
+    metrics: mergeWithDefaults(defaults.metrics, data.metrics),
+    stroke: mergeWithDefaults(defaults.stroke, data.stroke),
+    geometry: mergeWithDefaults(defaults.geometry, data.geometry),
+    terminals: mergeWithDefaults(defaults.terminals, data.terminals),
+    spacing: mergeWithDefaults(defaults.spacing, data.spacing),
+    proportions: mergeWithDefaults(defaults.proportions, data.proportions),
+    features: mergeWithDefaults(defaults.features, data.features),
   };
 
-  if (scriptType === 'japanese' || scriptType === 'mixed') {
-    result.japanese = { ...defaults.japanese, ...data.japanese };
+  if ((scriptType === 'japanese' || scriptType === 'mixed') && defaults.japanese) {
+    result.japanese = mergeWithDefaults(defaults.japanese, data.japanese);
   }
 
   return result;
