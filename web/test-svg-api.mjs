@@ -9,7 +9,11 @@ const base64Image = `data:image/png;base64,${imageBuffer.toString('base64')}`;
 console.log('Testing SVG conversion API...');
 console.log('Image size:', imageBuffer.length, 'bytes');
 
-const response = await fetch('http://localhost:3000/api/convert-svg', {
+// Try port 3000 first, then 3001
+const port = process.env.PORT || 3000;
+console.log('Using port:', port);
+
+const response = await fetch(`http://localhost:${port}/api/convert-svg`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ imageData: base64Image }),

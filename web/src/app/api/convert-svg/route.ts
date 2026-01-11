@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
-import potrace from 'potrace';
-import { optimize } from 'svgo';
+import * as potrace from 'potrace';
+import { optimize, type Config } from 'svgo';
 
 // Potrace parameters optimized for logo/typeface vectorization
-const POTRACE_OPTIONS: potrace.PotraceOptions = {
-  turnPolicy: potrace.Potrace.TURNPOLICY_MINORITY, // Best for logo shapes
+const POTRACE_OPTIONS = {
+  turnPolicy: 'minority' as const, // Best for logo shapes
   turdSize: 2,        // Remove noise (small isolated areas)
   alphaMax: 1.0,      // Corner detection threshold (balance curves/corners)
   optCurve: true,     // Enable curve optimization
@@ -17,7 +17,7 @@ const POTRACE_OPTIONS: potrace.PotraceOptions = {
 };
 
 // SVGO configuration optimized for Adobe Illustrator compatibility
-const SVGO_CONFIG = {
+const SVGO_CONFIG: Config = {
   plugins: [
     {
       name: 'preset-default',
@@ -33,22 +33,12 @@ const SVGO_CONFIG = {
         },
       },
     },
-    // Ensure viewBox is preserved
-    {
-      name: 'removeViewBox',
-      active: false,
-    },
     // Configure precision (3-4 digits for Illustrator)
     {
       name: 'cleanupNumericValues',
       params: {
         floatPrecision: 3,
       },
-    },
-    // Disable path merging explicitly
-    {
-      name: 'mergePaths',
-      active: false,
     },
   ],
 };
@@ -86,6 +76,8 @@ function adjustSvgForIllustrator(svgString: string, originalWidth: number, origi
 
 export async function POST(request: NextRequest) {
   try {
+    console.log('[SVG API] Starting conversion...');
+    
     const body = await request.json();
     const { imageData, originalWidth, originalHeight } = body;
 
@@ -96,64 +88,77 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log('[SVG API] Extracting base64 data...');
     // Extract base64 data (handle data URL format)
     const base64Data = imageData.includes(',') 
       ? imageData.split(',')[1] 
       : imageData;
     
     const inputBuffer = Buffer.from(base64Data, 'base64');
+    console.log('[SVG API] Input buffer size:', inputBuffer.length);
 
     // Get original image dimensions
+    console.log('[SVG API] Getting image metadata...');
     const metadata = await sharp(inputBuffer).metadata();
     const imgWidth = originalWidth || metadata.width || 1024;
     const imgHeight = originalHeight || metadata.height || 1024;
+    console.log('[SVG API] Dimensions:', imgWidth, 'x', imgHeight);
 
     // === PREPROCESSING WITH SHARP ===
-    // 1. Flatten to white background (remove alpha)
-    // 2. Convert to grayscale
-    // 3. Apply threshold for clean binary image
-    // 4. Upscale 2x for better trace quality (more anchor points)
-    
+    console.log('[SVG API] Preprocessing with Sharp...');
     const preprocessedBuffer = await sharp(inputBuffer)
-      .flatten({ background: { r: 255, g: 255, b: 255 } }) // White background
-      .grayscale()                                          // Convert to grayscale
-      .threshold(128)                                       // Binarize at midpoint
+      .flatten({ background: { r: 255, g: 255, b: 255 } })
+      .grayscale()
+      .threshold(128)
       .resize({
-        width: imgWidth * 2,                               // 2x upscale
+        width: imgWidth * 2,
         height: imgHeight * 2,
-        kernel: sharp.kernel.lanczos3,                     // High-quality interpolation
+        kernel: sharp.kernel.lanczos3,
       })
       .png()
       .toBuffer();
+    console.log('[SVG API] Preprocessed buffer size:', preprocessedBuffer.length);
 
     // === VECTORIZATION WITH POTRACE ===
+    console.log('[SVG API] Vectorizing with Potrace...');
     const svgString = await new Promise<string>((resolve, reject) => {
-      potrace.trace(preprocessedBuffer, POTRACE_OPTIONS, (err, svg) => {
+      potrace.trace(preprocessedBuffer, POTRACE_OPTIONS, (err: Error | null, svg: string) => {
         if (err) {
+          console.error('[SVG API] Potrace error:', err);
           reject(err);
         } else {
+          console.log('[SVG API] Potrace success, SVG length:', svg?.length);
           resolve(svg);
         }
       });
     });
 
     // === OPTIMIZATION WITH SVGO ===
+    console.log('[SVG API] Optimizing with SVGO...');
     const optimizedResult = optimize(svgString, SVGO_CONFIG);
     let finalSvg = optimizedResult.data;
+    console.log('[SVG API] Optimized SVG length:', finalSvg.length);
 
     // === ILLUSTRATOR COMPATIBILITY ADJUSTMENTS ===
+    console.log('[SVG API] Adjusting for Illustrator...');
     finalSvg = adjustSvgForIllustrator(finalSvg, imgWidth, imgHeight);
 
+    console.log('[SVG API] Conversion complete!');
     return NextResponse.json({
       svg: finalSvg,
       originalWidth: imgWidth,
       originalHeight: imgHeight,
     });
 
-  } catch (error) {
-    console.error('SVG conversion error:', error);
+  } catch (error: unknown) {
+    console.error('[SVG API] Error caught:', error);
+    console.error('[SVG API] Error type:', typeof error);
+    console.error('[SVG API] Error constructor:', error?.constructor?.name);
+    const errorMessage = error && typeof error === 'object' && 'message' in error 
+      ? String((error as { message: unknown }).message) 
+      : 'Conversion failed';
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Conversion failed' },
+      { error: errorMessage },
       { status: 500 }
     );
   }
