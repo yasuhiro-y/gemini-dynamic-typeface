@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 
 const MODELS = {
-  ANALYSIS: 'gemini-3-pro-preview',
+  ANALYSIS: 'gemini-2.5-flash',  // gemini-3-pro-preview is over quota
   IMAGE_GEN: 'gemini-3-pro-image-preview'
 };
 
@@ -26,10 +26,19 @@ function detectScript(text: string): ScriptType {
 
 // === MATHEMATICAL DNA INTERFACE ===
 interface MathematicalDNA {
-  // Script type
   scriptType: ScriptType;
+  
+  visualStyle: {
+    backgroundColor: 'white' | 'black' | 'colored' | 'transparent';
+    textColor: 'black' | 'white' | 'colored';
+    fillStyle: 'solid' | 'outline' | 'double-outline' | 'gradient';
+    outlineThicknessPx: number;
+    italicAngleDeg: number;
+    hasDropShadow: boolean;
+    has3DEffect: boolean;
+    textureStyle: 'clean' | 'distressed' | 'textured' | 'hand-drawn';
+  };
 
-  // METRICS (絶対値 px)
   metrics: {
     imageWidth: number;
     imageHeight: number;
@@ -39,7 +48,6 @@ interface MathematicalDNA {
     meanline: number;
   };
 
-  // STROKE (線の物理)
   stroke: {
     thickestPx: number;
     thinnestPx: number;
@@ -48,7 +56,6 @@ interface MathematicalDNA {
     weightToCapRatio: number;
   };
 
-  // GEOMETRY (幾何学)
   geometry: {
     curveRadiusPx: number;
     curveEccentricity: number;
@@ -59,7 +66,6 @@ interface MathematicalDNA {
     inkTrapAngleDeg: number;
   };
 
-  // TERMINALS (末端処理)
   terminals: {
     cutAngleDeg: number;
     roundnessFactor: number;
@@ -67,7 +73,6 @@ interface MathematicalDNA {
     serifThicknessPx: number;
   };
 
-  // SPACING (配置)
   spacing: {
     letterSpacingPx: number;
     letterSpacingRatio: number;
@@ -75,7 +80,6 @@ interface MathematicalDNA {
     sideBearingPx: number;
   };
 
-  // PROPORTIONS (比率)
   proportions: {
     widthToHeightRatio: number;
     xHeightToCapRatio: number;
@@ -83,7 +87,6 @@ interface MathematicalDNA {
     negativeSpaceRatio: number;
   };
 
-  // SPECIAL FEATURES
   features: {
     hasStencilGaps: boolean;
     stencilGapWidthPx: number;
@@ -91,61 +94,59 @@ interface MathematicalDNA {
     hasTouchingLetters: boolean;
   };
 
-  // JAPANESE-SPECIFIC (日本語特有) - only populated for japanese/mixed scripts
+  standardFontDetection: {
+    looksLikeStandardFont: boolean;
+    confidence: number;
+    detectedCategory: 'custom_logotype' | 'standard_gothic' | 'standard_mincho' | 'standard_sans' | 'standard_serif' | 'unknown';
+    uniqueFeatures: string[];
+    standardFontSimilarity: string;
+  };
+
+  criticalFeatures: {
+    top5: string[];
+    mustPreserve: string[];
+    characterWidthVariance: 'uniform' | 'natural' | 'dramatic';
+    widthDescription: string;
+  };
+
   japanese?: {
-    // === 書体分類 ===
-    styleCategory: 'geometric' | 'calligraphic' | 'gothic' | 'mincho' | 'handwritten' | 'decorative';
-    
-    // 画数・構造
-    strokeComplexity: number;      // 平均画数 (1-30)
-    radicalBalance: number;        // 部首バランス (0-1, 0.5=均等)
-    
-    // 線の特性
-    haraiFactor: number;           // 払い (0=なし, 1=強い)
-    tomeFactor: number;            // 止め (0=なし, 1=強い)
-    haneFactor: number;            // 跳ね (0=なし, 1=強い)
-    
-    // 構造
-    squareness: number;            // 正方形度 (0=縦長, 0.5=正方, 1=横長)
-    densityCenter: number;         // 密度中心 (0=上, 0.5=中央, 1=下)
-    
-    // スタイル（レガシー）
-    isMincho: boolean;             // 明朝体風
-    isGothic: boolean;             // ゴシック体風
-    isHandwritten: boolean;        // 手書き風
-    
-    // カナ特有
-    kanaRoundness: number;         // 仮名の丸み (0-1)
-    kanaConnectionFluidity: number; // 連綿の流れ (0-1)
-    
-    // === 幾何学的ロゴタイプ特有 ===
-    isGeometricLogotype: boolean;  // 幾何学的ロゴタイプか
-    isModularGrid: boolean;        // モジュラーグリッド構造か
-    gridUnitPx: number;            // グリッド単位 px
-    cornerRadiusPx: number;        // 角丸半径 px (0=シャープ)
-    isMonoline: boolean;           // 均一線幅か
-    hasStencilBreaks: boolean;     // ステンシル的な切れ目があるか
-    strokeEndStyle: 'flat' | 'round' | 'angled' | 'brush' | 'tapered';  // 線端処理
-    counterStyle: 'geometric' | 'organic' | 'traditional' | 'flowing';  // カウンター形状
-    verticalAlignment: 'baseline' | 'center' | 'top' | 'dynamic';  // 縦揃え
-    horizontalCompression: number; // 横圧縮率 (0.5=半分, 1=標準, 1.5=広い)
-    
-    // === カリグラフィック・筆文字特有 ===
-    isCalligraphic: boolean;       // カリグラフィック書体か
-    brushAngleDeg: number;         // 筆角度 (0=垂直, 45=斜め, 90=水平)
-    baselineAngleDeg: number;      // ベースライン角度 (-30〜+30, 0=水平)
-    italicAngleDeg: number;        // イタリック角度 (0=正体, 15=斜体)
-    strokeRhythm: 'uniform' | 'flowing' | 'dramatic' | 'staccato';  // 線のリズム
-    entryStrokeStyle: 'sharp' | 'soft' | 'hairline' | 'bold';  // 入り筆のスタイル
-    exitStrokeStyle: 'sharp' | 'tapered' | 'flourish' | 'abrupt';  // 抜き筆のスタイル
-    thickThinTransition: 'gradual' | 'sudden' | 'smooth';  // 太細の遷移
-    overallElegance: number;       // 優雅さ (0=無骨, 1=優雅)
-    connectedness: number;         // 連綿度 (0=分離, 1=連続)
-    dynamicRange: number;          // ダイナミックレンジ (0=静的, 1=動的)
+    styleCategory: 'custom_logotype' | 'geometric_logotype' | 'calligraphic_logotype' | 'geometric' | 'calligraphic' | 'gothic' | 'mincho' | 'handwritten' | 'decorative';
+    strokeComplexity: number;
+    radicalBalance: number;
+    haraiFactor: number;
+    tomeFactor: number;
+    haneFactor: number;
+    squareness: number;
+    densityCenter: number;
+    isMincho: boolean;
+    isGothic: boolean;
+    isHandwritten: boolean;
+    kanaRoundness: number;
+    kanaConnectionFluidity: number;
+    isGeometricLogotype: boolean;
+    isModularGrid: boolean;
+    gridUnitPx: number;
+    cornerRadiusPx: number;
+    isMonoline: boolean;
+    hasStencilBreaks: boolean;
+    strokeEndStyle: 'flat' | 'round' | 'angled' | 'brush' | 'tapered';
+    counterStyle: 'geometric' | 'organic' | 'traditional' | 'flowing';
+    verticalAlignment: 'baseline' | 'center' | 'top' | 'dynamic';
+    horizontalCompression: number;
+    isCalligraphic: boolean;
+    brushAngleDeg: number;
+    baselineAngleDeg: number;
+    italicAngleDeg: number;
+    strokeRhythm: 'uniform' | 'flowing' | 'dramatic' | 'staccato';
+    entryStrokeStyle: 'sharp' | 'soft' | 'hairline' | 'bold';
+    exitStrokeStyle: 'sharp' | 'tapered' | 'flourish' | 'abrupt';
+    thickThinTransition: 'gradual' | 'sudden' | 'smooth';
+    overallElegance: number;
+    connectedness: number;
+    dynamicRange: number;
   };
 }
 
-// === DNA COMPARISON INTERFACE ===
 interface DNAComparison {
   strokeContrastDiff: number;
   strokeWeightDiff: number;
@@ -159,13 +160,35 @@ interface DNAComparison {
   overallScore: number;
 }
 
+interface VisualDescription {
+  overallStyle: string;
+  letterShapes: string;
+  keyCharacteristics: string[];
+  howToRecreate: string;
+}
+
+interface IterationFeedback {
+  lostFeatures: string[];
+  preservedFeatures: string[];
+  previousScore: number;
+  critique: string;
+}
+
+interface VisualSimilarityResult {
+  similarityScore: number;
+  isGeneratedStandardFont: boolean;
+  isReferenceCustomLogotype: boolean;
+  preservedFeatures: string[];
+  lostFeatures: string[];
+  critique: string;
+  textAccuracy: number; // 0-100: How accurately the target text was rendered
+  detectedText: string; // What text was actually detected in the generated image
+}
+
 export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
-  
-  // Track if client disconnected
   let isCancelled = false;
   
-  // Listen for client disconnect via AbortSignal
   request.signal.addEventListener('abort', () => {
     isCancelled = true;
   });
@@ -202,12 +225,9 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        // Detect script type
         const scriptType = detectScript(targetText);
-        
         const ai = new GoogleGenAI({ apiKey });
 
-        // Save reference image
         if (!send({ type: 'status', status: 'uploading', message: 'Processing reference image...' })) {
           controller.close();
           return;
@@ -221,17 +241,33 @@ export async function POST(request: NextRequest) {
         const refPath = path.join(outputDir, 'reference.png');
         fs.writeFileSync(refPath, Buffer.from(base64Data, 'base64'));
 
-        // Check cancellation
+        // Send sessionId to client for feedback saving
+        send({ type: 'session', sessionId });
+
         if (isCancelled) {
           controller.close();
           return;
         }
 
-        // Extract reference DNA
         const scriptLabel = scriptType === 'japanese' ? '日本語' : scriptType === 'mixed' ? '日本語+Latin' : 'Latin';
         send({ type: 'status', status: 'analyzing', message: `Extracting DNA (${scriptLabel})...` });
         const dnaStartTime = Date.now();
-        const refDNA = await extractMathematicalDNA(ai, refPath, scriptType);
+        
+        let refDNA: MathematicalDNA;
+        let visualDesc: VisualDescription;
+        let dnaError: string | null = null;
+        
+        try {
+          [refDNA, visualDesc] = await Promise.all([
+            extractMathematicalDNA(ai, refPath, scriptType),
+            extractVisualDescription(ai, refPath)
+          ]);
+        } catch (extractError) {
+          dnaError = extractError instanceof Error ? extractError.message : 'Unknown extraction error';
+          refDNA = getDefaultDNA(scriptType);
+          visualDesc = { overallStyle: 'Error: ' + dnaError, letterShapes: '', keyCharacteristics: [], howToRecreate: '' };
+        }
+        
         const dnaTime = Date.now() - dnaStartTime;
         
         if (isCancelled) {
@@ -239,28 +275,41 @@ export async function POST(request: NextRequest) {
           return;
         }
         
+        // Check if DNA extraction actually worked
+        const dnaIsDefault = !refDNA.criticalFeatures?.top5 || refDNA.criticalFeatures.top5.length === 0;
+        
         send({ 
           type: 'dna', 
           dna: refDNA,
+          visualDescription: visualDesc,
           scriptType,
-          time: dnaTime
+          time: dnaTime,
+          warning: dnaIsDefault ? 'DNA extraction returned defaults - API may have failed' : null,
+          error: dnaError
         });
+        
+        const refDnaPath = path.join(outputDir, 'reference_dna.json');
+        fs.writeFileSync(refDnaPath, JSON.stringify({
+          targetText,
+          scriptType,
+          extractionTime: dnaTime,
+          dna: refDNA,
+          visualDescription: visualDesc
+        }, null, 2));
         
         let bestScore = 0;
         let bestIteration = 0;
+        let previousFeedback: IterationFeedback | undefined = undefined;
 
-        // Iteration loop
         for (let iteration = 1; iteration <= maxIterations; iteration++) {
-          // Check cancellation at start of each iteration
-          if (isCancelled) {
-            break;
-          }
+          if (isCancelled) break;
 
-          // Send iteration_start event first
           send({ 
             type: 'iteration_start', 
             iteration,
-            message: `Starting iteration ${iteration}...`
+            message: iteration === 1 
+              ? `Starting iteration ${iteration}...`
+              : `Starting iteration ${iteration} (with feedback)...`
           });
 
           send({ 
@@ -271,24 +320,20 @@ export async function POST(request: NextRequest) {
 
           const iterPath = path.join(outputDir, 'iterations', `iteration_${String(iteration).padStart(2, '0')}.png`);
           
-          // Check cancellation before generation
           if (isCancelled) break;
 
-          // Generate image
           const genStartTime = Date.now();
           try {
-            await generateImage(ai, refPath, targetText, iterPath, scriptType, refDNA);
+            await generateImage(ai, refPath, targetText, iterPath, scriptType, refDNA, visualDesc, previousFeedback);
           } catch (error) {
             if (isCancelled) break;
-            send({ type: 'iteration_error', iteration, message: `Generation failed, retrying...` });
+            send({ type: 'iteration_error', iteration, message: `Generation failed: ${error}` });
             continue;
           }
           const genTime = Date.now() - genStartTime;
 
-          // Check cancellation after generation
           if (isCancelled) break;
 
-          // Send image immediately after generation
           const imageBuffer = fs.readFileSync(iterPath);
           const imageBase64 = `data:image/png;base64,${imageBuffer.toString('base64')}`;
           
@@ -299,10 +344,8 @@ export async function POST(request: NextRequest) {
             generationTime: genTime
           });
 
-          // Check cancellation before evaluation
           if (isCancelled) break;
 
-          // Now evaluate
           send({ 
             type: 'status', 
             status: 'evaluating', 
@@ -310,49 +353,88 @@ export async function POST(request: NextRequest) {
           });
 
           const evalStartTime = Date.now();
+          
           const genDNA = await extractMathematicalDNA(ai, iterPath, scriptType);
-          const comparison = compareDNA(refDNA, genDNA, scriptType);
+          const dnaComparison = compareDNA(refDNA, genDNA, scriptType);
+          const visualEval = await evaluateVisualSimilarity(ai, refPath, iterPath, targetText, scriptType);
+          
+          let finalScore: number;
+          const wasReplacedWithStandardFont = 
+            !refDNA.standardFontDetection.looksLikeStandardFont && 
+            (visualEval.isGeneratedStandardFont || genDNA.standardFontDetection.looksLikeStandardFont);
+          
+          // New scoring formula with text accuracy
+          // - Visual style similarity: 40%
+          // - Text accuracy (correct characters): 30%
+          // - DNA comparison: 30%
+          if (wasReplacedWithStandardFont) {
+            // Heavy penalty for replacing custom logotype with standard font
+            finalScore = Math.min(35, Math.round(
+              visualEval.similarityScore * 0.2 + 
+              visualEval.textAccuracy * 0.4 +
+              dnaComparison.overallScore * 0.1
+            ));
+          } else {
+            finalScore = Math.round(
+              visualEval.similarityScore * 0.4 +   // Style match
+              visualEval.textAccuracy * 0.3 +       // Correct text
+              dnaComparison.overallScore * 0.3      // Technical DNA match
+            );
+          }
+          
+          // Additional penalty for wrong text
+          if (visualEval.textAccuracy < 50) {
+            finalScore = Math.min(finalScore, 40); // Cap score if text is wrong
+          }
+          
           const evalTime = Date.now() - evalStartTime;
 
-          // Check cancellation after evaluation
           if (isCancelled) break;
 
-          // Send evaluation results
-          send({ 
-            type: 'iteration_eval', 
+          const evalResult = {
             iteration,
-            score: comparison.overallScore,
-            comparison,
+            score: finalScore,
+            visualScore: visualEval.similarityScore,
+            dnaScore: dnaComparison.overallScore,
+            textAccuracy: visualEval.textAccuracy,
+            detectedText: visualEval.detectedText,
+            wasReplacedWithStandardFont,
+            visualEvaluation: visualEval,
+            comparison: dnaComparison,
             generatedDNA: genDNA,
             evaluationTime: evalTime
-          });
+          };
 
-          if (comparison.overallScore > bestScore) {
-            bestScore = comparison.overallScore;
+          const evalJsonPath = iterPath.replace('.png', '_eval.json');
+          fs.writeFileSync(evalJsonPath, JSON.stringify(evalResult, null, 2));
+
+          send({ type: 'iteration_eval', ...evalResult });
+
+          if (finalScore > bestScore) {
+            bestScore = finalScore;
             bestIteration = iteration;
           }
 
-          if (comparison.overallScore >= 85) {
+          previousFeedback = {
+            lostFeatures: visualEval.lostFeatures,
+            preservedFeatures: visualEval.preservedFeatures,
+            previousScore: finalScore,
+            critique: visualEval.critique
+          };
+
+          if (finalScore >= 90 && !wasReplacedWithStandardFont) {
             break;
           }
         }
 
         if (!isCancelled) {
           const totalTime = Date.now() - startTime;
-          send({ 
-            type: 'complete', 
-            bestScore, 
-            bestIteration,
-            totalTime
-          });
+          send({ type: 'complete', bestScore, bestIteration, totalTime });
         }
 
       } catch (error) {
         if (!isCancelled) {
-          send({ 
-            type: 'error', 
-            message: error instanceof Error ? error.message : 'Unknown error' 
-          });
+          send({ type: 'error', message: error instanceof Error ? error.message : 'Unknown error' });
         }
       } finally {
         controller.close();
@@ -369,140 +451,16 @@ export async function POST(request: NextRequest) {
   });
 }
 
-// === DNA EXTRACTION ===
-async function extractMathematicalDNA(ai: GoogleGenAI, imagePath: string, scriptType: ScriptType = 'latin'): Promise<MathematicalDNA> {
+// === VISUAL DESCRIPTION EXTRACTION ===
+async function extractVisualDescription(ai: GoogleGenAI, imagePath: string): Promise<VisualDescription> {
   const imageData = fs.readFileSync(imagePath).toString('base64');
   
-  const basePrompt = `You are a forensic typography analyst. Analyze this image and extract PRECISE NUMERICAL measurements.`;
-  
-  const latinFields = `
-  "metrics": {
-    "imageWidth": <image width px>,
-    "imageHeight": <image height px>,
-    "capHeight": <capital letter height px>,
-    "xHeight": <lowercase x height px>,
-    "baseline": <baseline y-position px>,
-    "meanline": <meanline y-position px>
-  },
-  "stroke": {
-    "thickestPx": <thickest stroke width px>,
-    "thinnestPx": <thinnest stroke width px>,
-    "contrastRatio": <thick/thin ratio, 1.0=monoline>,
-    "averageWeightPx": <average stroke width px>,
-    "weightToCapRatio": <stroke/capHeight ratio>
-  },
-  "geometry": {
-    "curveRadiusPx": <radius of curves like O, C px>,
-    "curveEccentricity": <0=perfect circle, 1=flat>,
-    "outerCornerRadiusPx": <outer corner radius px>,
-    "innerCornerRadiusPx": <inner corner radius px>,
-    "cornerRadiusRatio": <cornerR/strokeWeight>,
-    "inkTrapDepthPx": <ink trap depth px, 0 if none>,
-    "inkTrapAngleDeg": <ink trap angle degrees>
-  },
-  "terminals": {
-    "cutAngleDeg": <terminal cut angle, 0=vertical, 90=horizontal>,
-    "roundnessFactor": <0=flat cut, 1=fully rounded>,
-    "serifLengthPx": <serif length px, 0 for sans>,
-    "serifThicknessPx": <serif thickness px>
-  },
-  "spacing": {
-    "letterSpacingPx": <average letter spacing px>,
-    "letterSpacingRatio": <spacing/capHeight ratio>,
-    "wordSpacingPx": <word spacing px>,
-    "sideBearingPx": <average side bearing px>
-  },
-  "proportions": {
-    "widthToHeightRatio": <average letter width/height>,
-    "xHeightToCapRatio": <xHeight/capHeight>,
-    "counterAreaRatio": <counter area / total area>,
-    "negativeSpaceRatio": <negative space / total area>
-  },
-  "features": {
-    "hasStencilGaps": <true if stencil-style breaks>,
-    "stencilGapWidthPx": <gap width px if stencil>,
-    "hasLigatures": <true if connected letters>,
-    "hasTouchingLetters": <true if letters touch>
-  }`;
-
-  const japaneseFields = `
-  "japanese": {
-    "styleCategory": <"geometric" | "calligraphic" | "gothic" | "mincho" | "handwritten" | "decorative">,
-    
-    "strokeComplexity": <average stroke count per character, 1-30>,
-    "radicalBalance": <balance of radicals, 0=left-heavy, 0.5=balanced, 1=right-heavy>,
-    "haraiFactor": <払い intensity, 0=none, 1=strong sweeping strokes>,
-    "tomeFactor": <止め intensity, 0=none, 1=strong stopping>,
-    "haneFactor": <跳ね intensity, 0=none, 1=strong flicks>,
-    "squareness": <0=tall, 0.5=square, 1=wide>,
-    "densityCenter": <0=top-heavy, 0.5=centered, 1=bottom-heavy>,
-    "isMincho": <true if serif/明朝 style>,
-    "isGothic": <true if sans-serif/ゴシック style>,
-    "isHandwritten": <true if handwritten/手書き style>,
-    "kanaRoundness": <roundness of kana characters, 0-1>,
-    "kanaConnectionFluidity": <fluidity of connected strokes, 0-1>,
-    
-    "isGeometricLogotype": <true if this is a geometric/modernist logotype design>,
-    "isModularGrid": <true if characters are built on a modular grid system>,
-    "gridUnitPx": <estimated grid unit size in px, 0 if not grid-based>,
-    "cornerRadiusPx": <corner radius on joints/corners in px, 0=sharp>,
-    "isMonoline": <true if stroke weight is uniform throughout>,
-    "hasStencilBreaks": <true if there are intentional breaks/gaps in strokes>,
-    "strokeEndStyle": <"flat" | "round" | "angled" | "brush" | "tapered">,
-    "counterStyle": <"geometric" | "organic" | "traditional" | "flowing">,
-    "verticalAlignment": <"baseline" | "center" | "top" | "dynamic">,
-    "horizontalCompression": <character width ratio, 0.5=compressed, 1=normal, 1.5=extended>,
-    
-    "isCalligraphic": <true if elegant calligraphic/brush style with dramatic thick-thin contrast>,
-    "brushAngleDeg": <brush angle in degrees, 0=vertical, 45=diagonal, 90=horizontal>,
-    "baselineAngleDeg": <baseline angle, -30 to +30, 0=horizontal, negative=descending left to right>,
-    "italicAngleDeg": <italic slant angle, 0=upright, 5-15=italic>,
-    "strokeRhythm": <"uniform" | "flowing" | "dramatic" | "staccato">,
-    "entryStrokeStyle": <"sharp" | "soft" | "hairline" | "bold">,
-    "exitStrokeStyle": <"sharp" | "tapered" | "flourish" | "abrupt">,
-    "thickThinTransition": <"gradual" | "sudden" | "smooth">,
-    "overallElegance": <elegance level, 0=rough/casual, 1=refined/elegant>,
-    "connectedness": <how connected/flowing the text is, 0=separated, 1=continuous>,
-    "dynamicRange": <visual energy, 0=static/calm, 1=dynamic/energetic>
-  }`;
-
-  let prompt: string;
-  
-  if (scriptType === 'japanese' || scriptType === 'mixed') {
-    prompt = `${basePrompt}
-
-This image contains Japanese text (漢字/ひらがな/カタカナ). Analyze both universal and Japanese-specific typography features.
-
-Return a JSON object with these measurements:
-
-{
-  "scriptType": "${scriptType}",
-  ${latinFields},
-  ${japaneseFields}
-}
-
-For Japanese typography, pay attention to:
-- 払い (harai): sweeping diagonal strokes ending thin
-- 止め (tome): strokes that stop firmly
-- 跳ね (hane): flicking upward strokes
-- The balance between 偏 (left) and 旁 (right) radicals
-- Whether it's 明朝体 (Mincho/serif) or ゴシック体 (Gothic/sans-serif)
-
-Be precise. Return ONLY the JSON.`;
-  } else {
-    prompt = `${basePrompt}
-
-Return a JSON object with these exact measurements (estimate in pixels based on the image):
-
-{
-  "scriptType": "latin",
-  ${latinFields}
-}
-
-Be precise. Measure carefully. Return ONLY the JSON.`;
-  }
+  // Simplified prompt - shorter and more focused for better success rate
+  const prompt = `Analyze the typography in this image. Return JSON only:
+{"overallStyle":"<1 sentence describing the overall style>","letterShapes":"<describe each visible letter briefly>","keyCharacteristics":["<feature 1>","<feature 2>","<feature 3>","<feature 4>","<feature 5>"],"howToRecreate":"<brief instructions>"}`;
 
   try {
+    console.log('[VisualDesc] Starting extraction...');
     const response = await ai.models.generateContent({
       model: MODELS.ANALYSIS,
       contents: [{
@@ -516,185 +474,242 @@ Be precise. Measure carefully. Return ONLY the JSON.`;
 
     const part = response.candidates?.[0]?.content?.parts?.[0];
     if (part && 'text' in part && part.text) {
-      const json = part.text.match(/\{[\s\S]*\}/)?.[0];
-      if (json) {
-        const parsed = JSON.parse(json);
-        return validateAndFillDNA(parsed, scriptType);
+      console.log('[VisualDesc] Got response:', part.text.substring(0, 300));
+      // Try to extract JSON - handle both with and without code blocks
+      let jsonStr = part.text;
+      // Remove markdown code blocks if present
+      const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (codeBlockMatch) {
+        jsonStr = codeBlockMatch[1];
+      }
+      // Try to find JSON object
+      const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        console.log('[VisualDesc] Parsed OK, keyCharacteristics:', parsed.keyCharacteristics?.length);
+        return {
+          overallStyle: parsed.overallStyle || 'Not specified',
+          letterShapes: parsed.letterShapes || '',
+          keyCharacteristics: Array.isArray(parsed.keyCharacteristics) ? parsed.keyCharacteristics : [],
+          howToRecreate: parsed.howToRecreate || ''
+        };
       }
     }
   } catch (e) {
-    console.error('DNA extraction error:', e);
+    console.error('[VisualDesc] Error:', e);
   }
 
+  console.log('[VisualDesc] Returning default');
+  return {
+    overallStyle: 'Unable to extract',
+    letterShapes: '',
+    keyCharacteristics: [],
+    howToRecreate: ''
+  };
+}
+
+// === DNA EXTRACTION ===
+async function extractMathematicalDNA(ai: GoogleGenAI, imagePath: string, scriptType: ScriptType = 'latin'): Promise<MathematicalDNA> {
+  const imageData = fs.readFileSync(imagePath).toString('base64');
+  
+  const prompt = `Analyze this typography image and extract its visual DNA. Focus on the unique characteristics.
+
+IMPORTANT: Identify the TOP 5 most distinctive visual features that make this typeface unique.
+
+Respond with ONLY a JSON object (no markdown code blocks):
+{"scriptType":"${scriptType}","visualStyle":{"backgroundColor":"white","textColor":"black","fillStyle":"solid","outlineThicknessPx":0,"italicAngleDeg":0,"hasDropShadow":false,"has3DEffect":false,"textureStyle":"clean"},"metrics":{"imageWidth":1024,"imageHeight":1024,"capHeight":200,"xHeight":140,"baseline":700,"meanline":500},"stroke":{"thickestPx":40,"thinnestPx":40,"contrastRatio":1.0,"averageWeightPx":40,"weightToCapRatio":0.2},"geometry":{"curveRadiusPx":10,"curveEccentricity":0,"outerCornerRadiusPx":5,"innerCornerRadiusPx":5,"cornerRadiusRatio":0.5,"inkTrapDepthPx":0,"inkTrapAngleDeg":0},"terminals":{"cutAngleDeg":0,"roundnessFactor":0.5,"serifLengthPx":0,"serifThicknessPx":0},"spacing":{"letterSpacingPx":20,"letterSpacingRatio":0.1,"wordSpacingPx":80,"sideBearingPx":10},"proportions":{"widthToHeightRatio":0.8,"xHeightToCapRatio":0.7,"counterAreaRatio":0.3,"negativeSpaceRatio":0.5},"features":{"hasStencilGaps":false,"stencilGapWidthPx":0,"hasLigatures":false,"hasTouchingLetters":false},"standardFontDetection":{"looksLikeStandardFont":false,"confidence":0.8,"detectedCategory":"custom_logotype","uniqueFeatures":["feature1","feature2"],"standardFontSimilarity":"none"},"criticalFeatures":{"top5":["distinctive feature 1","distinctive feature 2","distinctive feature 3","distinctive feature 4","distinctive feature 5"],"mustPreserve":["most important feature"],"characterWidthVariance":"natural","widthDescription":"description of width variation"}}
+
+Replace all placeholder values with actual analysis of the image. Be specific about what makes this typeface unique.`;
+
+  try {
+    console.log('[DNA] Starting extraction with model:', MODELS.ANALYSIS);
+    const response = await ai.models.generateContent({
+      model: MODELS.ANALYSIS,
+      contents: [{
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'image/png', data: imageData } },
+          { text: prompt }
+        ]
+      }]
+    });
+
+    console.log('[DNA] Got response, candidates:', response.candidates?.length);
+    const part = response.candidates?.[0]?.content?.parts?.[0];
+    if (part && 'text' in part && part.text) {
+      console.log('[DNA] Raw response (first 500 chars):', part.text.substring(0, 500));
+      const json = part.text.match(/\{[\s\S]*\}/)?.[0];
+      if (json) {
+        try {
+          const parsed = JSON.parse(json);
+          console.log('[DNA] Parsed OK. Top5 features:', parsed.criticalFeatures?.top5);
+          return validateAndFillDNA(parsed, scriptType);
+        } catch (parseErr) {
+          console.error('[DNA] JSON parse error:', parseErr, 'Raw:', json.substring(0, 200));
+        }
+      } else {
+        console.error('[DNA] No JSON found in response. Full text:', part.text);
+      }
+    } else {
+      console.error('[DNA] No text part. Response structure:', JSON.stringify(response.candidates?.[0]?.content, null, 2));
+    }
+  } catch (e) {
+    const errorMsg = e instanceof Error ? e.message : String(e);
+    console.error('[DNA] Extraction error:', errorMsg);
+    // Return default but mark the error in the DNA
+    const defaultDNA = getDefaultDNA(scriptType);
+    defaultDNA.criticalFeatures.widthDescription = 'ERROR: ' + errorMsg;
+    return defaultDNA;
+  }
+
+  console.log('[DNA] Returning default DNA (no valid response)');
   return getDefaultDNA(scriptType);
 }
 
-// Helper to merge objects while filtering out undefined values
-function mergeWithDefaults<T extends Record<string, unknown>>(defaults: T, overrides?: Partial<T>): T {
-  if (!overrides) return defaults;
-  const result = { ...defaults };
-  for (const key of Object.keys(overrides) as Array<keyof T>) {
-    if (overrides[key] !== undefined) {
-      result[key] = overrides[key] as T[keyof T];
-    }
-  }
-  return result;
-}
-
-function validateAndFillDNA(data: Partial<MathematicalDNA>, scriptType: ScriptType = 'latin'): MathematicalDNA {
+function validateAndFillDNA(data: Partial<MathematicalDNA>, scriptType: ScriptType): MathematicalDNA {
   const defaults = getDefaultDNA(scriptType);
-  
-  const result: MathematicalDNA = {
-    scriptType: data.scriptType || scriptType,
-    metrics: mergeWithDefaults(defaults.metrics, data.metrics),
-    stroke: mergeWithDefaults(defaults.stroke, data.stroke),
-    geometry: mergeWithDefaults(defaults.geometry, data.geometry),
-    terminals: mergeWithDefaults(defaults.terminals, data.terminals),
-    spacing: mergeWithDefaults(defaults.spacing, data.spacing),
-    proportions: mergeWithDefaults(defaults.proportions, data.proportions),
-    features: mergeWithDefaults(defaults.features, data.features),
-  };
-
-  if ((scriptType === 'japanese' || scriptType === 'mixed') && defaults.japanese) {
-    result.japanese = mergeWithDefaults(defaults.japanese, data.japanese);
-  }
-
-  return result;
+  return { ...defaults, ...data } as MathematicalDNA;
 }
 
-function getDefaultDNA(scriptType: ScriptType = 'latin'): MathematicalDNA {
-  const base: MathematicalDNA = {
+function getDefaultDNA(scriptType: ScriptType): MathematicalDNA {
+  return {
     scriptType,
-    metrics: {
-      imageWidth: 1024,
-      imageHeight: 1024,
-      capHeight: 200,
-      xHeight: 140,
-      baseline: 700,
-      meanline: 500,
-    },
-    stroke: {
-      thickestPx: 40,
-      thinnestPx: 40,
-      contrastRatio: 1.0,
-      averageWeightPx: 40,
-      weightToCapRatio: 0.2,
-    },
-    geometry: {
-      curveRadiusPx: 100,
-      curveEccentricity: 0,
-      outerCornerRadiusPx: 0,
-      innerCornerRadiusPx: 0,
-      cornerRadiusRatio: 0,
-      inkTrapDepthPx: 0,
-      inkTrapAngleDeg: 0,
-    },
-    terminals: {
-      cutAngleDeg: 0,
-      roundnessFactor: 0,
-      serifLengthPx: 0,
-      serifThicknessPx: 0,
-    },
-    spacing: {
-      letterSpacingPx: 20,
-      letterSpacingRatio: 0.1,
-      wordSpacingPx: 80,
-      sideBearingPx: 10,
-    },
-    proportions: {
-      widthToHeightRatio: 0.8,
-      xHeightToCapRatio: 0.7,
-      counterAreaRatio: 0.3,
-      negativeSpaceRatio: 0.5,
-    },
-    features: {
-      hasStencilGaps: false,
-      stencilGapWidthPx: 0,
-      hasLigatures: false,
-      hasTouchingLetters: false,
-    },
-  };
-
-  if (scriptType === 'japanese' || scriptType === 'mixed') {
-    base.japanese = {
-      styleCategory: 'gothic' as const,
-      strokeComplexity: 10,
-      radicalBalance: 0.5,
-      haraiFactor: 0.5,
-      tomeFactor: 0.5,
-      haneFactor: 0.5,
-      squareness: 0.5,
-      densityCenter: 0.5,
-      isMincho: false,
-      isGothic: true,
-      isHandwritten: false,
-      kanaRoundness: 0.5,
-      kanaConnectionFluidity: 0.3,
-      // Geometric logotype defaults
-      isGeometricLogotype: false,
-      isModularGrid: false,
-      gridUnitPx: 0,
-      cornerRadiusPx: 0,
-      isMonoline: false,
-      hasStencilBreaks: false,
-      strokeEndStyle: 'flat' as const,
-      counterStyle: 'traditional' as const,
-      verticalAlignment: 'baseline' as const,
-      horizontalCompression: 1.0,
-      // Calligraphic defaults
-      isCalligraphic: false,
-      brushAngleDeg: 45,
-      baselineAngleDeg: 0,
+    visualStyle: {
+      backgroundColor: 'white',
+      textColor: 'black',
+      fillStyle: 'solid',
+      outlineThicknessPx: 0,
       italicAngleDeg: 0,
-      strokeRhythm: 'uniform' as const,
-      entryStrokeStyle: 'soft' as const,
-      exitStrokeStyle: 'tapered' as const,
-      thickThinTransition: 'gradual' as const,
-      overallElegance: 0.5,
-      connectedness: 0.3,
-      dynamicRange: 0.5,
-    };
+      hasDropShadow: false,
+      has3DEffect: false,
+      textureStyle: 'clean',
+    },
+    metrics: { imageWidth: 1024, imageHeight: 1024, capHeight: 200, xHeight: 140, baseline: 700, meanline: 500 },
+    stroke: { thickestPx: 40, thinnestPx: 40, contrastRatio: 1.0, averageWeightPx: 40, weightToCapRatio: 0.2 },
+    geometry: { curveRadiusPx: 100, curveEccentricity: 0, outerCornerRadiusPx: 0, innerCornerRadiusPx: 0, cornerRadiusRatio: 0, inkTrapDepthPx: 0, inkTrapAngleDeg: 0 },
+    terminals: { cutAngleDeg: 0, roundnessFactor: 0, serifLengthPx: 0, serifThicknessPx: 0 },
+    spacing: { letterSpacingPx: 20, letterSpacingRatio: 0.1, wordSpacingPx: 80, sideBearingPx: 10 },
+    proportions: { widthToHeightRatio: 0.8, xHeightToCapRatio: 0.7, counterAreaRatio: 0.3, negativeSpaceRatio: 0.5 },
+    features: { hasStencilGaps: false, stencilGapWidthPx: 0, hasLigatures: false, hasTouchingLetters: false },
+    standardFontDetection: { looksLikeStandardFont: false, confidence: 0.5, detectedCategory: 'custom_logotype', uniqueFeatures: [], standardFontSimilarity: 'none' },
+    criticalFeatures: { top5: [], mustPreserve: [], characterWidthVariance: 'natural', widthDescription: '' },
+  };
+}
+
+// === VISUAL SIMILARITY EVALUATION ===
+async function evaluateVisualSimilarity(
+  ai: GoogleGenAI,
+  refPath: string,
+  genPath: string,
+  targetText: string,
+  scriptType: ScriptType
+): Promise<VisualSimilarityResult> {
+  const refData = fs.readFileSync(refPath).toString('base64');
+  const genData = fs.readFileSync(genPath).toString('base64');
+  
+  const prompt = `You are a typography expert. Compare these two images:
+IMAGE 1 (first image): The REFERENCE design - the original typeface style
+IMAGE 2 (second image): The GENERATED attempt to recreate that style
+
+The target text that should appear in the generated image is: "${targetText}"
+
+EVALUATION TASKS:
+1. Read the text in the GENERATED image (IMAGE 2) carefully
+2. Compare if it matches the target text "${targetText}" exactly
+3. Rate the visual style similarity between reference and generated
+
+SIMILARITY SCORING (0-100):
+- 90-100: Nearly identical letterform style, weight, and character
+- 70-89: Good style match with minor differences in details
+- 50-69: Moderate match, some stylistic features lost
+- 30-49: Poor match, many important features different
+- 0-29: Complete mismatch or replaced with standard font
+
+TEXT ACCURACY SCORING (0-100):
+- 100: Exact match - all characters are correct
+- 75: Minor issue - one character slightly malformed but readable
+- 50: One character wrong or missing
+- 25: Multiple characters wrong or missing
+- 0: Completely wrong or unreadable
+
+IMPORTANT: Be strict. If the generated image uses a standard/generic font instead of matching the reference's custom style, score should be under 40.
+
+You MUST respond with ONLY a JSON object (no markdown, no explanation):
+{"similarityScore":75,"textAccuracy":100,"detectedText":"${targetText}","isReferenceCustomLogotype":true,"isGeneratedStandardFont":false,"preservedFeatures":["thick strokes","rounded corners"],"lostFeatures":["unique curves","spacing"],"critique":"The generated text maintains weight but loses the distinctive character shapes"}`;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: MODELS.ANALYSIS,
+      contents: [{
+        role: 'user',
+        parts: [
+          { inlineData: { mimeType: 'image/png', data: refData } },
+          { inlineData: { mimeType: 'image/png', data: genData } },
+          { text: prompt }
+        ]
+      }]
+    });
+
+    const part = response.candidates?.[0]?.content?.parts?.[0];
+    if (part && 'text' in part && part.text) {
+      console.log('Visual eval raw response:', part.text.substring(0, 500));
+      const json = part.text.match(/\{[\s\S]*?\}/)?.[0];
+      if (json) {
+        const parsed = JSON.parse(json);
+        return {
+          similarityScore: typeof parsed.similarityScore === 'number' ? parsed.similarityScore : 50,
+          isReferenceCustomLogotype: parsed.isReferenceCustomLogotype ?? true,
+          isGeneratedStandardFont: parsed.isGeneratedStandardFont ?? false,
+          preservedFeatures: Array.isArray(parsed.preservedFeatures) ? parsed.preservedFeatures : [],
+          lostFeatures: Array.isArray(parsed.lostFeatures) ? parsed.lostFeatures : [],
+          critique: parsed.critique || 'No critique provided',
+          textAccuracy: typeof parsed.textAccuracy === 'number' ? parsed.textAccuracy : 50,
+          detectedText: typeof parsed.detectedText === 'string' ? parsed.detectedText : ''
+        };
+      } else {
+        console.error('No JSON found in response:', part.text.substring(0, 200));
+      }
+    } else {
+      console.error('No text part in response');
+    }
+  } catch (e) {
+    console.error('Visual similarity error:', e);
   }
 
-  return base;
+  return {
+    similarityScore: 50,
+    isReferenceCustomLogotype: true,
+    isGeneratedStandardFont: false,
+    preservedFeatures: [],
+    lostFeatures: ['Unable to evaluate'],
+    critique: 'Evaluation failed',
+    textAccuracy: 50,
+    detectedText: ''
+  };
 }
 
 // === DNA COMPARISON ===
-interface DNAComparisonExtended extends DNAComparison {
-  // Japanese-specific diffs (only for japanese/mixed)
-  japaneseDiffs?: {
-    strokeComplexityDiff: number;
-    haraiFactor: number;
-    tomeFactor: number;
-    haneFactor: number;
-    squarenessDiff: number;
-    styleMatch: boolean;
-  };
-  // Geometric logotype diffs (only for geometric Japanese logotypes)
-  geometricDiffs?: {
-    cornerRadiusDiff: number;
-    gridMatch: boolean;
-    monolineMatch: boolean;
-    stencilMatch: boolean;
-    strokeEndMatch: boolean;
-    counterMatch: boolean;
-    compressionDiff: number;
-  };
-  // Calligraphic diffs (only for calligraphic Japanese logotypes)
-  calligraphicDiffs?: {
-    brushAngleDiff: number;
-    baselineDiff: number;
-    italicDiff: number;
-    rhythmMatch: boolean;
-    entryMatch: boolean;
-    exitMatch: boolean;
-    eleganceDiff: number;
-    connectednessDiff: number;
-    dynamicDiff: number;
-  };
-}
+function compareDNA(ref: MathematicalDNA, gen: MathematicalDNA, scriptType: ScriptType): DNAComparison {
+  // Check if either DNA is default values (extraction failed)
+  const refIsDefault = !ref.criticalFeatures?.top5 || ref.criticalFeatures.top5.length === 0;
+  const genIsDefault = !gen.criticalFeatures?.top5 || gen.criticalFeatures.top5.length === 0;
+  
+  // If both are default values, we can't meaningfully compare - return low score
+  if (refIsDefault && genIsDefault) {
+    return {
+      strokeContrastDiff: 0,
+      strokeWeightDiff: 0,
+      curveRadiusDiff: 0,
+      cornerRadiusDiff: 0,
+      inkTrapDepthDiff: 0,
+      spacingDiff: 0,
+      proportionDiff: 0,
+      terminalDiff: 0,
+      featureMatch: true,
+      overallScore: 50, // Uncertain - can't evaluate properly
+    };
+  }
 
-function compareDNA(ref: MathematicalDNA, gen: MathematicalDNA, scriptType: ScriptType = 'latin'): DNAComparisonExtended {
   const safeDiff = (a: number, b: number): number => {
     if (a === 0 && b === 0) return 0;
     return Math.abs(a - b) / Math.max(Math.abs(a), Math.abs(b), 1);
@@ -709,182 +724,23 @@ function compareDNA(ref: MathematicalDNA, gen: MathematicalDNA, scriptType: Scri
   const proportionDiff = safeDiff(ref.proportions.widthToHeightRatio, gen.proportions.widthToHeightRatio);
   const terminalDiff = safeDiff(ref.terminals.roundnessFactor, gen.terminals.roundnessFactor);
   
-  const featureMatch = 
-    ref.features.hasStencilGaps === gen.features.hasStencilGaps &&
-    ref.features.hasLigatures === gen.features.hasLigatures;
+  const featureMatch = ref.features.hasStencilGaps === gen.features.hasStencilGaps;
 
   let score = 100;
+  score -= strokeContrastDiff * 20;
+  score -= strokeWeightDiff * 15;
+  score -= curveRadiusDiff * 15;
+  score -= cornerRadiusDiff * 10;
+  score -= inkTrapDepthDiff * 10;
+  score -= spacingDiff * 10;
+  score -= proportionDiff * 10;
+  score -= terminalDiff * 5;
+  if (!featureMatch) score -= 5;
   
-  if (scriptType === 'japanese' || scriptType === 'mixed') {
-    // Japanese-weighted scoring
-    const refJp = ref.japanese!;
-    const genJp = gen.japanese!;
-    
-    const styleCategory = refJp.styleCategory || 'gothic';
-    const isGeometric = styleCategory === 'geometric' || refJp.isGeometricLogotype || refJp.isModularGrid || refJp.isMonoline;
-    const isCalligraphic = styleCategory === 'calligraphic' || refJp.isCalligraphic;
-    
-    if (isGeometric) {
-      // Geometric logotype scoring - emphasize structural features
-      const cornerRadiusMatch = safeDiff(refJp.cornerRadiusPx, genJp.cornerRadiusPx);
-      const gridMatch = refJp.isModularGrid === genJp.isModularGrid;
-      const monolineMatch = refJp.isMonoline === genJp.isMonoline;
-      const stencilMatch = refJp.hasStencilBreaks === genJp.hasStencilBreaks;
-      const strokeEndMatch = refJp.strokeEndStyle === genJp.strokeEndStyle;
-      const counterMatch = refJp.counterStyle === genJp.counterStyle;
-      const compressionDiff = safeDiff(refJp.horizontalCompression, genJp.horizontalCompression);
-
-      // Geometric weights (total: 100)
-      score -= strokeWeightDiff * 20;        // 20% - uniform stroke is critical
-      if (!monolineMatch) score -= 15;       // 15% - monoline mismatch
-      if (!gridMatch) score -= 12;           // 12% - grid mismatch
-      score -= cornerRadiusMatch * 15;       // 15% - corner radius
-      if (!counterMatch) score -= 10;        // 10% - counter style
-      score -= spacingDiff * 10;             // 10% - spacing
-      if (!stencilMatch) score -= 8;         // 8% - stencil breaks
-      if (!strokeEndMatch) score -= 5;       // 5% - stroke ends
-      score -= compressionDiff * 5;          // 5% - compression
-
-      return {
-        strokeContrastDiff,
-        strokeWeightDiff,
-        curveRadiusDiff,
-        cornerRadiusDiff,
-        inkTrapDepthDiff,
-        spacingDiff,
-        proportionDiff,
-        terminalDiff,
-        featureMatch,
-        overallScore: Math.max(0, Math.round(score)),
-        japaneseDiffs: {
-          strokeComplexityDiff: 0,
-          haraiFactor: 0,
-          tomeFactor: 0,
-          haneFactor: 0,
-          squarenessDiff: safeDiff(refJp.squareness, genJp.squareness),
-          styleMatch: gridMatch && monolineMatch,
-        },
-        geometricDiffs: {
-          cornerRadiusDiff: cornerRadiusMatch,
-          gridMatch,
-          monolineMatch,
-          stencilMatch,
-          strokeEndMatch,
-          counterMatch,
-          compressionDiff,
-        },
-      };
-    }
-    
-    if (isCalligraphic) {
-      // Calligraphic scoring - emphasize flow and elegance
-      const brushAngleDiff = safeDiff(refJp.brushAngleDeg, genJp.brushAngleDeg);
-      const baselineDiff = safeDiff(refJp.baselineAngleDeg, genJp.baselineAngleDeg);
-      const italicDiff = safeDiff(refJp.italicAngleDeg, genJp.italicAngleDeg);
-      const rhythmMatch = refJp.strokeRhythm === genJp.strokeRhythm;
-      const entryMatch = refJp.entryStrokeStyle === genJp.entryStrokeStyle;
-      const exitMatch = refJp.exitStrokeStyle === genJp.exitStrokeStyle;
-      const eleganceDiff = safeDiff(refJp.overallElegance, genJp.overallElegance);
-      const connectednessDiff = safeDiff(refJp.connectedness, genJp.connectedness);
-      const dynamicDiff = safeDiff(refJp.dynamicRange, genJp.dynamicRange);
-
-      // Calligraphic weights (total: 100)
-      score -= strokeContrastDiff * 18;      // 18% - thick-thin contrast is critical
-      score -= brushAngleDiff * 12;          // 12% - brush angle
-      score -= baselineDiff * 10;            // 10% - baseline angle
-      score -= italicDiff * 8;               // 8% - italic angle
-      if (!rhythmMatch) score -= 10;         // 10% - stroke rhythm
-      if (!entryMatch) score -= 6;           // 6% - entry stroke
-      if (!exitMatch) score -= 8;            // 8% - exit stroke
-      score -= eleganceDiff * 10;            // 10% - elegance
-      score -= connectednessDiff * 8;        // 8% - connectedness
-      score -= dynamicDiff * 5;              // 5% - dynamic range
-      score -= spacingDiff * 5;              // 5% - spacing
-
-      return {
-        strokeContrastDiff,
-        strokeWeightDiff,
-        curveRadiusDiff,
-        cornerRadiusDiff,
-        inkTrapDepthDiff,
-        spacingDiff,
-        proportionDiff,
-        terminalDiff,
-        featureMatch,
-        overallScore: Math.max(0, Math.round(score)),
-        japaneseDiffs: {
-          strokeComplexityDiff: 0,
-          haraiFactor: 0,
-          tomeFactor: 0,
-          haneFactor: 0,
-          squarenessDiff: 0,
-          styleMatch: rhythmMatch && entryMatch && exitMatch,
-        },
-        calligraphicDiffs: {
-          brushAngleDiff,
-          baselineDiff,
-          italicDiff,
-          rhythmMatch,
-          entryMatch,
-          exitMatch,
-          eleganceDiff,
-          connectednessDiff,
-          dynamicDiff,
-        },
-      };
-    }
-    
-    const strokeComplexityDiff = safeDiff(refJp.strokeComplexity, genJp.strokeComplexity);
-    const haraiDiff = safeDiff(refJp.haraiFactor, genJp.haraiFactor);
-    const tomeDiff = safeDiff(refJp.tomeFactor, genJp.tomeFactor);
-    const haneDiff = safeDiff(refJp.haneFactor, genJp.haneFactor);
-    const squarenessDiff = safeDiff(refJp.squareness, genJp.squareness);
-    const styleMatch = refJp.isMincho === genJp.isMincho && refJp.isGothic === genJp.isGothic;
-
-    // Japanese weights (total: 100)
-    score -= strokeWeightDiff * 15;        // 15%
-    score -= strokeContrastDiff * 10;      // 10%
-    score -= haraiDiff * 12;               // 12% - 払い
-    score -= tomeDiff * 12;                // 12% - 止め  
-    score -= haneDiff * 10;                // 10% - 跳ね
-    score -= squarenessDiff * 10;          // 10%
-    score -= spacingDiff * 8;              // 8%
-    score -= proportionDiff * 8;           // 8%
-    score -= strokeComplexityDiff * 5;     // 5%
-    if (!styleMatch) score -= 10;          // 10%
-
-    return {
-      strokeContrastDiff,
-      strokeWeightDiff,
-      curveRadiusDiff,
-      cornerRadiusDiff,
-      inkTrapDepthDiff,
-      spacingDiff,
-      proportionDiff,
-      terminalDiff,
-      featureMatch,
-      overallScore: Math.max(0, Math.round(score)),
-      japaneseDiffs: {
-        strokeComplexityDiff,
-        haraiFactor: haraiDiff,
-        tomeFactor: tomeDiff,
-        haneFactor: haneDiff,
-        squarenessDiff,
-        styleMatch,
-      },
-    };
+  // Penalty if one side is default values
+  if (refIsDefault || genIsDefault) {
+    score = Math.min(score, 60); // Cap at 60 if we couldn't properly analyze one side
   }
-
-  // Latin weights
-  score -= strokeContrastDiff * 20;  // 20%
-  score -= strokeWeightDiff * 15;    // 15%
-  score -= curveRadiusDiff * 15;     // 15%
-  score -= cornerRadiusDiff * 10;    // 10%
-  score -= inkTrapDepthDiff * 10;    // 10%
-  score -= spacingDiff * 10;         // 10%
-  score -= proportionDiff * 10;      // 10%
-  score -= terminalDiff * 5;         // 5%
-  if (!featureMatch) score -= 5;     // 5%
 
   return {
     strokeContrastDiff,
@@ -906,88 +762,98 @@ async function generateImage(
   refPath: string, 
   targetText: string, 
   outputPath: string,
-  scriptType: ScriptType = 'latin',
-  referenceDNA?: MathematicalDNA
+  scriptType: ScriptType,
+  referenceDNA: MathematicalDNA,
+  visualDesc: VisualDescription,
+  feedback?: IterationFeedback
 ): Promise<void> {
   const refData = fs.readFileSync(refPath).toString('base64');
   
-  let prompt: string;
+  const vs = referenceDNA.visualStyle || {};
+  const cf = referenceDNA.criticalFeatures || {};
+  const sfd = referenceDNA.standardFontDetection || {};
   
-  if (scriptType === 'japanese' || scriptType === 'mixed') {
-    const jp = referenceDNA?.japanese;
-    const styleCategory = jp?.styleCategory || 'gothic';
-    const isGeometric = styleCategory === 'geometric' || jp?.isGeometricLogotype || jp?.isModularGrid || jp?.isMonoline;
-    const isCalligraphic = styleCategory === 'calligraphic' || jp?.isCalligraphic;
-    
-    if (isGeometric) {
-      // Special prompt for geometric logotypes
-      prompt = `Create "${targetText}" as a GEOMETRIC LOGOTYPE matching the reference image EXACTLY.
+  // Safe array access helpers
+  const cfTop5 = Array.isArray(cf.top5) ? cf.top5 : [];
+  const cfMustPreserve = Array.isArray(cf.mustPreserve) ? cf.mustPreserve : [];
+  const sfdUniqueFeatures = Array.isArray(sfd.uniqueFeatures) ? sfd.uniqueFeatures : [];
+  
+  // Build feedback section for iterations 2+
+  const feedbackSection = feedback ? `
+=== PREVIOUS ATTEMPT FAILED (Score: ${feedback.previousScore}/100) ===
+CRITIQUE: ${feedback.critique}
+LOST FEATURES YOU MUST FIX:
+${Array.isArray(feedback.lostFeatures) ? feedback.lostFeatures.map(f => `- ${f}`).join('\n') : '- Unknown'}
+PRESERVED (keep these): ${Array.isArray(feedback.preservedFeatures) ? feedback.preservedFeatures.join(', ') : 'Unknown'}
+` : '';
 
-CRITICAL STYLE REQUIREMENTS - Copy these precisely from the reference:
-${jp?.isModularGrid ? '- MODULAR GRID CONSTRUCTION: Build each character on the same grid system' : ''}
-${jp?.isMonoline ? '- UNIFORM STROKE WEIGHT: All strokes must have identical thickness' : ''}
-${jp?.cornerRadiusPx && jp.cornerRadiusPx > 0 ? `- ROUNDED CORNERS: All corners must have ${jp.cornerRadiusPx}px radius` : '- SHARP CORNERS: No rounded corners'}
-${jp?.hasStencilBreaks ? '- STENCIL BREAKS: Include intentional gaps at stroke intersections' : ''}
-- STROKE END STYLE: ${jp?.strokeEndStyle || 'flat'}
-- COUNTER SHAPES: ${jp?.counterStyle || 'geometric'} (must match reference exactly)
-${jp?.horizontalCompression !== 1 ? `- CHARACTER WIDTH: ${jp?.horizontalCompression && jp.horizontalCompression < 1 ? 'Compressed' : 'Extended'} proportions` : ''}
+  // Build critical features section from DNA analysis
+  const criticalFeaturesSection = cfTop5.length > 0 ? `
+=== CRITICAL STYLE FEATURES TO REPLICATE ===
+${cfTop5.map((f, i) => `${i + 1}. ${f}`).join('\n')}
 
-This is a MODERN GEOMETRIC Japanese logotype. Do NOT use traditional calligraphic strokes.
-Do NOT add 払い, 跳ね, or brush-like characteristics unless the reference has them.
+MUST PRESERVE AT ALL COSTS:
+${cfMustPreserve.length > 0 ? cfMustPreserve.join('\n') : 'All features above'}
+` : '';
 
-White background, black text only, centered.
-MATCH THE REFERENCE STYLE WITH 100% PRECISION.`;
-    } else if (isCalligraphic) {
-      // Special prompt for calligraphic/brush styles
-      prompt = `Create "${targetText}" as an ELEGANT CALLIGRAPHIC LOGOTYPE matching the reference image EXACTLY.
+  // Build standard font warning
+  const standardFontWarning = !sfd.looksLikeStandardFont ? `
+=== WARNING: CUSTOM LOGOTYPE ===
+This is NOT a standard font. It has these unique features:
+${sfdUniqueFeatures.length > 0 ? sfdUniqueFeatures.map(f => `- ${f}`).join('\n') : '- Custom letterforms'}
+DO NOT substitute with any system/standard font like Arial, Helvetica, Gothic, etc.
+You MUST recreate the custom letterforms exactly.
+` : '';
 
-This is a refined Japanese calligraphic/brush style (カリグラフィック書体). 
+  // Build character width guidance
+  const widthGuidance = cf.widthDescription ? `
+=== CHARACTER WIDTH VARIATION ===
+${cf.widthDescription}
+Width variance: ${cf.characterWidthVariance || 'natural'}
+` : '';
 
-CRITICAL CALLIGRAPHIC REQUIREMENTS - Copy these PRECISELY:
-- BRUSH ANGLE: ${jp?.brushAngleDeg || 45}° (the angle of the imaginary brush)
-- BASELINE ANGLE: ${jp?.baselineAngleDeg || 0}° (${jp?.baselineAngleDeg && jp.baselineAngleDeg < 0 ? 'descending' : jp?.baselineAngleDeg && jp.baselineAngleDeg > 0 ? 'ascending' : 'horizontal'} baseline)
-- ITALIC SLANT: ${jp?.italicAngleDeg || 0}° (${jp?.italicAngleDeg && jp.italicAngleDeg > 5 ? 'italic/slanted' : 'upright'})
-- STROKE RHYTHM: ${jp?.strokeRhythm || 'flowing'} (${jp?.strokeRhythm === 'dramatic' ? 'bold dramatic strokes' : jp?.strokeRhythm === 'flowing' ? 'smooth flowing motion' : 'consistent rhythm'})
-- ENTRY STROKES: ${jp?.entryStrokeStyle || 'hairline'} (how strokes begin)
-- EXIT STROKES: ${jp?.exitStrokeStyle || 'tapered'} (how strokes end - ${jp?.exitStrokeStyle === 'flourish' ? 'with elegant flourishes' : jp?.exitStrokeStyle === 'tapered' ? 'tapering to thin' : 'cleanly'})
-- THICK-THIN TRANSITION: ${jp?.thickThinTransition || 'smooth'} contrast changes
-- ELEGANCE LEVEL: ${((jp?.overallElegance || 0.8) * 100).toFixed(0)}% refined
-- CONNECTEDNESS: ${((jp?.connectedness || 0.5) * 100).toFixed(0)}% flowing between characters
-- DYNAMIC RANGE: ${((jp?.dynamicRange || 0.7) * 100).toFixed(0)}% visual energy
+  // Visual style section
+  const visualStyleSection = `
+=== VISUAL STYLE ===
+- Background: ${vs.backgroundColor || 'white'}
+- Text color: ${vs.textColor || 'black'}
+- Fill style: ${vs.fillStyle || 'solid'}
+${vs.italicAngleDeg > 0 ? `- Italic angle: ${vs.italicAngleDeg}°` : ''}
+${vs.hasDropShadow ? '- Has drop shadow' : ''}
+${vs.has3DEffect ? '- Has 3D effect' : ''}
+`;
 
-CRITICAL: This is NOT a standard font. It's an artistic calligraphic logotype.
-- Match the exact THICK-THIN CONTRAST of the reference
-- Match the exact STROKE ANGLES and FLOW
-- Match the exact BASELINE DYNAMICS
-- Preserve the ELEGANT, REFINED aesthetic
+  // Fallback to visualDesc if criticalFeatures is empty
+  const visualDescKeyChars = Array.isArray(visualDesc.keyCharacteristics) ? visualDesc.keyCharacteristics : [];
+  const fallbackSection = cfTop5.length === 0 && visualDesc.overallStyle !== 'Unable to extract' ? `
+=== VISUAL DESCRIPTION ===
+Style: ${visualDesc.overallStyle}
+Letter shapes: ${visualDesc.letterShapes || 'Not specified'}
+Key characteristics: ${visualDescKeyChars.join(', ') || 'Not specified'}
+How to recreate: ${visualDesc.howToRecreate || 'Match the reference image'}
+` : '';
 
-White background, black text only, centered.
-MATCH THE REFERENCE STYLE WITH 100% PRECISION.`;
-    } else {
-      // Standard Japanese typography prompt
-      prompt = `Create "${targetText}" in the EXACT SAME typeface style as the reference image.
+  const prompt = `
+TASK: Recreate the EXACT letterform style from the reference image, spelling "${targetText}".
 
-This is Japanese/日本語 text. Match precisely:
-- Stroke weight (線の太さ) and contrast ratio: ${referenceDNA?.stroke.contrastRatio?.toFixed(1) || 'match reference'}:1
-- 払い (harai/sweeping strokes): ${jp?.haraiFactor?.toFixed(2) || 'match reference'}
-- 止め (tome/stopping strokes): ${jp?.tomeFactor?.toFixed(2) || 'match reference'}
-- 跳ね (hane/flicking strokes): ${jp?.haneFactor?.toFixed(2) || 'match reference'}
-- Character proportions (字形のバランス)
-- Spacing between characters
-- Overall style: ${jp?.isMincho ? '明朝体' : jp?.isGothic ? 'ゴシック体' : 'match reference'}
+${feedbackSection}
+${criticalFeaturesSection}
+${standardFontWarning}
+${widthGuidance}
+${visualStyleSection}
+${fallbackSection}
 
-White background, black text, centered.
-Preserve the exact typographic style of the reference.`;
-    }
-  } else {
-    prompt = `Create "${targetText}" in the EXACT SAME typeface style as the reference image. 
-Match precisely:
-- Stroke weight and contrast
-- Corner radius and geometry
-- Letter spacing and proportions
-- Terminal style
-White background, black text, centered.`;
-  }
+=== ABSOLUTE REQUIREMENTS ===
+1. Spell EXACTLY "${targetText}" - verify each character is correct
+2. Copy the EXACT stroke construction, weight, and contrast from reference
+3. Match terminals, corners, and curve radii precisely
+4. DO NOT use standard/system fonts - recreate the custom letterforms
+5. Center the text horizontally
+6. No decorations, labels, borders, or watermarks
+7. Clean background matching reference style
+
+Look at the reference image carefully. Your output must look like it was created by the same designer.
+`.trim();
 
   const response = await ai.models.generateContent({
     model: MODELS.IMAGE_GEN,
@@ -1000,10 +866,6 @@ White background, black text, centered.`;
     }],
     config: {
       responseModalities: ['image', 'text'],
-      imageConfig: {
-        aspectRatio: '1:1',
-        imageSize: '2K'
-      }
     }
   });
 
