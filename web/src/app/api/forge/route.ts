@@ -1,11 +1,9 @@
 import { NextRequest } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 
 const MODELS = {
-  ANALYSIS: 'gemini-2.5-flash',  // gemini-3-pro-preview is over quota
+  ANALYSIS: 'gemini-2.5-flash',
   IMAGE_GEN: 'gemini-3-pro-image-preview'
 };
 
@@ -181,8 +179,8 @@ interface VisualSimilarityResult {
   preservedFeatures: string[];
   lostFeatures: string[];
   critique: string;
-  textAccuracy: number; // 0-100: How accurately the target text was rendered
-  detectedText: string; // What text was actually detected in the generated image
+  textAccuracy: number;
+  detectedText: string;
 }
 
 export async function POST(request: NextRequest) {
@@ -233,15 +231,10 @@ export async function POST(request: NextRequest) {
           return;
         }
         
-        const base64Data = referenceImage.split(',')[1];
+        // Extract base64 data from data URL
+        const refImageBase64 = referenceImage.split(',')[1];
         const sessionId = crypto.randomUUID();
-        const outputDir = path.join(process.cwd(), '..', 'output', `web_${sessionId}`);
-        fs.mkdirSync(path.join(outputDir, 'iterations'), { recursive: true });
-        
-        const refPath = path.join(outputDir, 'reference.png');
-        fs.writeFileSync(refPath, Buffer.from(base64Data, 'base64'));
 
-        // Send sessionId to client for feedback saving
         send({ type: 'session', sessionId });
 
         if (isCancelled) {
@@ -259,8 +252,8 @@ export async function POST(request: NextRequest) {
         
         try {
           [refDNA, visualDesc] = await Promise.all([
-            extractMathematicalDNA(ai, refPath, scriptType),
-            extractVisualDescription(ai, refPath)
+            extractMathematicalDNA(ai, refImageBase64, scriptType),
+            extractVisualDescription(ai, refImageBase64)
           ]);
         } catch (extractError) {
           dnaError = extractError instanceof Error ? extractError.message : 'Unknown extraction error';
@@ -275,7 +268,6 @@ export async function POST(request: NextRequest) {
           return;
         }
         
-        // Check if DNA extraction actually worked
         const dnaIsDefault = !refDNA.criticalFeatures?.top5 || refDNA.criticalFeatures.top5.length === 0;
         
         send({ 
@@ -287,15 +279,6 @@ export async function POST(request: NextRequest) {
           warning: dnaIsDefault ? 'DNA extraction returned defaults - API may have failed' : null,
           error: dnaError
         });
-        
-        const refDnaPath = path.join(outputDir, 'reference_dna.json');
-        fs.writeFileSync(refDnaPath, JSON.stringify({
-          targetText,
-          scriptType,
-          extractionTime: dnaTime,
-          dna: refDNA,
-          visualDescription: visualDesc
-        }, null, 2));
         
         let bestScore = 0;
         let bestIteration = 0;
@@ -317,14 +300,13 @@ export async function POST(request: NextRequest) {
             status: 'generating', 
             message: `Generating iteration ${iteration}/${maxIterations}...` 
           });
-
-          const iterPath = path.join(outputDir, 'iterations', `iteration_${String(iteration).padStart(2, '0')}.png`);
           
           if (isCancelled) break;
 
           const genStartTime = Date.now();
+          let generatedImageBase64: string;
           try {
-            await generateImage(ai, refPath, targetText, iterPath, scriptType, refDNA, visualDesc, previousFeedback);
+            generatedImageBase64 = await generateImage(ai, refImageBase64, targetText, scriptType, refDNA, visualDesc, previousFeedback);
           } catch (error) {
             if (isCancelled) break;
             send({ type: 'iteration_error', iteration, message: `Generation failed: ${error}` });
@@ -334,13 +316,12 @@ export async function POST(request: NextRequest) {
 
           if (isCancelled) break;
 
-          const imageBuffer = fs.readFileSync(iterPath);
-          const imageBase64 = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+          const imageUrl = `data:image/png;base64,${generatedImageBase64}`;
           
           send({ 
             type: 'iteration_image', 
             iteration,
-            imageUrl: imageBase64,
+            imageUrl,
             generationTime: genTime
           });
 
@@ -354,21 +335,16 @@ export async function POST(request: NextRequest) {
 
           const evalStartTime = Date.now();
           
-          const genDNA = await extractMathematicalDNA(ai, iterPath, scriptType);
+          const genDNA = await extractMathematicalDNA(ai, generatedImageBase64, scriptType);
           const dnaComparison = compareDNA(refDNA, genDNA, scriptType);
-          const visualEval = await evaluateVisualSimilarity(ai, refPath, iterPath, targetText, scriptType);
+          const visualEval = await evaluateVisualSimilarity(ai, refImageBase64, generatedImageBase64, targetText, scriptType);
           
           let finalScore: number;
           const wasReplacedWithStandardFont = 
             !refDNA.standardFontDetection.looksLikeStandardFont && 
             (visualEval.isGeneratedStandardFont || genDNA.standardFontDetection.looksLikeStandardFont);
           
-          // New scoring formula with text accuracy
-          // - Visual style similarity: 40%
-          // - Text accuracy (correct characters): 30%
-          // - DNA comparison: 30%
           if (wasReplacedWithStandardFont) {
-            // Heavy penalty for replacing custom logotype with standard font
             finalScore = Math.min(35, Math.round(
               visualEval.similarityScore * 0.2 + 
               visualEval.textAccuracy * 0.4 +
@@ -376,15 +352,14 @@ export async function POST(request: NextRequest) {
             ));
           } else {
             finalScore = Math.round(
-              visualEval.similarityScore * 0.4 +   // Style match
-              visualEval.textAccuracy * 0.3 +       // Correct text
-              dnaComparison.overallScore * 0.3      // Technical DNA match
+              visualEval.similarityScore * 0.4 +
+              visualEval.textAccuracy * 0.3 +
+              dnaComparison.overallScore * 0.3
             );
           }
           
-          // Additional penalty for wrong text
           if (visualEval.textAccuracy < 50) {
-            finalScore = Math.min(finalScore, 40); // Cap score if text is wrong
+            finalScore = Math.min(finalScore, 40);
           }
           
           const evalTime = Date.now() - evalStartTime;
@@ -404,9 +379,6 @@ export async function POST(request: NextRequest) {
             generatedDNA: genDNA,
             evaluationTime: evalTime
           };
-
-          const evalJsonPath = iterPath.replace('.png', '_eval.json');
-          fs.writeFileSync(evalJsonPath, JSON.stringify(evalResult, null, 2));
 
           send({ type: 'iteration_eval', ...evalResult });
 
@@ -452,21 +424,17 @@ export async function POST(request: NextRequest) {
 }
 
 // === VISUAL DESCRIPTION EXTRACTION ===
-async function extractVisualDescription(ai: GoogleGenAI, imagePath: string): Promise<VisualDescription> {
-  const imageData = fs.readFileSync(imagePath).toString('base64');
-  
-  // Simplified prompt - shorter and more focused for better success rate
+async function extractVisualDescription(ai: GoogleGenAI, imageBase64: string): Promise<VisualDescription> {
   const prompt = `Analyze the typography in this image. Return JSON only:
 {"overallStyle":"<1 sentence describing the overall style>","letterShapes":"<describe each visible letter briefly>","keyCharacteristics":["<feature 1>","<feature 2>","<feature 3>","<feature 4>","<feature 5>"],"howToRecreate":"<brief instructions>"}`;
 
   try {
-    console.log('[VisualDesc] Starting extraction...');
     const response = await ai.models.generateContent({
       model: MODELS.ANALYSIS,
       contents: [{
         role: 'user',
         parts: [
-          { inlineData: { mimeType: 'image/png', data: imageData } },
+          { inlineData: { mimeType: 'image/png', data: imageBase64 } },
           { text: prompt }
         ]
       }]
@@ -474,19 +442,14 @@ async function extractVisualDescription(ai: GoogleGenAI, imagePath: string): Pro
 
     const part = response.candidates?.[0]?.content?.parts?.[0];
     if (part && 'text' in part && part.text) {
-      console.log('[VisualDesc] Got response:', part.text.substring(0, 300));
-      // Try to extract JSON - handle both with and without code blocks
       let jsonStr = part.text;
-      // Remove markdown code blocks if present
       const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (codeBlockMatch) {
         jsonStr = codeBlockMatch[1];
       }
-      // Try to find JSON object
       const jsonMatch = jsonStr.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
-        console.log('[VisualDesc] Parsed OK, keyCharacteristics:', parsed.keyCharacteristics?.length);
         return {
           overallStyle: parsed.overallStyle || 'Not specified',
           letterShapes: parsed.letterShapes || '',
@@ -499,7 +462,6 @@ async function extractVisualDescription(ai: GoogleGenAI, imagePath: string): Pro
     console.error('[VisualDesc] Error:', e);
   }
 
-  console.log('[VisualDesc] Returning default');
   return {
     overallStyle: 'Unable to extract',
     letterShapes: '',
@@ -509,9 +471,7 @@ async function extractVisualDescription(ai: GoogleGenAI, imagePath: string): Pro
 }
 
 // === DNA EXTRACTION ===
-async function extractMathematicalDNA(ai: GoogleGenAI, imagePath: string, scriptType: ScriptType = 'latin'): Promise<MathematicalDNA> {
-  const imageData = fs.readFileSync(imagePath).toString('base64');
-  
+async function extractMathematicalDNA(ai: GoogleGenAI, imageBase64: string, scriptType: ScriptType = 'latin'): Promise<MathematicalDNA> {
   const prompt = `Analyze this typography image and extract its visual DNA. Focus on the unique characteristics.
 
 IMPORTANT: Identify the TOP 5 most distinctive visual features that make this typeface unique.
@@ -522,47 +482,36 @@ Respond with ONLY a JSON object (no markdown code blocks):
 Replace all placeholder values with actual analysis of the image. Be specific about what makes this typeface unique.`;
 
   try {
-    console.log('[DNA] Starting extraction with model:', MODELS.ANALYSIS);
     const response = await ai.models.generateContent({
       model: MODELS.ANALYSIS,
       contents: [{
         role: 'user',
         parts: [
-          { inlineData: { mimeType: 'image/png', data: imageData } },
+          { inlineData: { mimeType: 'image/png', data: imageBase64 } },
           { text: prompt }
         ]
       }]
     });
 
-    console.log('[DNA] Got response, candidates:', response.candidates?.length);
     const part = response.candidates?.[0]?.content?.parts?.[0];
     if (part && 'text' in part && part.text) {
-      console.log('[DNA] Raw response (first 500 chars):', part.text.substring(0, 500));
       const json = part.text.match(/\{[\s\S]*\}/)?.[0];
       if (json) {
         try {
           const parsed = JSON.parse(json);
-          console.log('[DNA] Parsed OK. Top5 features:', parsed.criticalFeatures?.top5);
           return validateAndFillDNA(parsed, scriptType);
         } catch (parseErr) {
-          console.error('[DNA] JSON parse error:', parseErr, 'Raw:', json.substring(0, 200));
+          console.error('[DNA] JSON parse error:', parseErr);
         }
-      } else {
-        console.error('[DNA] No JSON found in response. Full text:', part.text);
       }
-    } else {
-      console.error('[DNA] No text part. Response structure:', JSON.stringify(response.candidates?.[0]?.content, null, 2));
     }
   } catch (e) {
-    const errorMsg = e instanceof Error ? e.message : String(e);
-    console.error('[DNA] Extraction error:', errorMsg);
-    // Return default but mark the error in the DNA
+    console.error('[DNA] Extraction error:', e);
     const defaultDNA = getDefaultDNA(scriptType);
-    defaultDNA.criticalFeatures.widthDescription = 'ERROR: ' + errorMsg;
+    defaultDNA.criticalFeatures.widthDescription = 'ERROR: ' + (e instanceof Error ? e.message : String(e));
     return defaultDNA;
   }
 
-  console.log('[DNA] Returning default DNA (no valid response)');
   return getDefaultDNA(scriptType);
 }
 
@@ -599,14 +548,11 @@ function getDefaultDNA(scriptType: ScriptType): MathematicalDNA {
 // === VISUAL SIMILARITY EVALUATION ===
 async function evaluateVisualSimilarity(
   ai: GoogleGenAI,
-  refPath: string,
-  genPath: string,
+  refBase64: string,
+  genBase64: string,
   targetText: string,
   scriptType: ScriptType
 ): Promise<VisualSimilarityResult> {
-  const refData = fs.readFileSync(refPath).toString('base64');
-  const genData = fs.readFileSync(genPath).toString('base64');
-  
   const prompt = `You are a typography expert. Compare these two images:
 IMAGE 1 (first image): The REFERENCE design - the original typeface style
 IMAGE 2 (second image): The GENERATED attempt to recreate that style
@@ -643,8 +589,8 @@ You MUST respond with ONLY a JSON object (no markdown, no explanation):
       contents: [{
         role: 'user',
         parts: [
-          { inlineData: { mimeType: 'image/png', data: refData } },
-          { inlineData: { mimeType: 'image/png', data: genData } },
+          { inlineData: { mimeType: 'image/png', data: refBase64 } },
+          { inlineData: { mimeType: 'image/png', data: genBase64 } },
           { text: prompt }
         ]
       }]
@@ -652,7 +598,6 @@ You MUST respond with ONLY a JSON object (no markdown, no explanation):
 
     const part = response.candidates?.[0]?.content?.parts?.[0];
     if (part && 'text' in part && part.text) {
-      console.log('Visual eval raw response:', part.text.substring(0, 500));
       const json = part.text.match(/\{[\s\S]*?\}/)?.[0];
       if (json) {
         const parsed = JSON.parse(json);
@@ -666,11 +611,7 @@ You MUST respond with ONLY a JSON object (no markdown, no explanation):
           textAccuracy: typeof parsed.textAccuracy === 'number' ? parsed.textAccuracy : 50,
           detectedText: typeof parsed.detectedText === 'string' ? parsed.detectedText : ''
         };
-      } else {
-        console.error('No JSON found in response:', part.text.substring(0, 200));
       }
-    } else {
-      console.error('No text part in response');
     }
   } catch (e) {
     console.error('Visual similarity error:', e);
@@ -690,11 +631,9 @@ You MUST respond with ONLY a JSON object (no markdown, no explanation):
 
 // === DNA COMPARISON ===
 function compareDNA(ref: MathematicalDNA, gen: MathematicalDNA, scriptType: ScriptType): DNAComparison {
-  // Check if either DNA is default values (extraction failed)
   const refIsDefault = !ref.criticalFeatures?.top5 || ref.criticalFeatures.top5.length === 0;
   const genIsDefault = !gen.criticalFeatures?.top5 || gen.criticalFeatures.top5.length === 0;
   
-  // If both are default values, we can't meaningfully compare - return low score
   if (refIsDefault && genIsDefault) {
     return {
       strokeContrastDiff: 0,
@@ -706,7 +645,7 @@ function compareDNA(ref: MathematicalDNA, gen: MathematicalDNA, scriptType: Scri
       proportionDiff: 0,
       terminalDiff: 0,
       featureMatch: true,
-      overallScore: 50, // Uncertain - can't evaluate properly
+      overallScore: 50,
     };
   }
 
@@ -737,9 +676,8 @@ function compareDNA(ref: MathematicalDNA, gen: MathematicalDNA, scriptType: Scri
   score -= terminalDiff * 5;
   if (!featureMatch) score -= 5;
   
-  // Penalty if one side is default values
   if (refIsDefault || genIsDefault) {
-    score = Math.min(score, 60); // Cap at 60 if we couldn't properly analyze one side
+    score = Math.min(score, 60);
   }
 
   return {
@@ -759,26 +697,21 @@ function compareDNA(ref: MathematicalDNA, gen: MathematicalDNA, scriptType: Scri
 // === IMAGE GENERATION ===
 async function generateImage(
   ai: GoogleGenAI, 
-  refPath: string, 
+  refBase64: string, 
   targetText: string, 
-  outputPath: string,
   scriptType: ScriptType,
   referenceDNA: MathematicalDNA,
   visualDesc: VisualDescription,
   feedback?: IterationFeedback
-): Promise<void> {
-  const refData = fs.readFileSync(refPath).toString('base64');
-  
+): Promise<string> {
   const vs = referenceDNA.visualStyle || {};
   const cf = referenceDNA.criticalFeatures || {};
   const sfd = referenceDNA.standardFontDetection || {};
   
-  // Safe array access helpers
   const cfTop5 = Array.isArray(cf.top5) ? cf.top5 : [];
   const cfMustPreserve = Array.isArray(cf.mustPreserve) ? cf.mustPreserve : [];
   const sfdUniqueFeatures = Array.isArray(sfd.uniqueFeatures) ? sfd.uniqueFeatures : [];
   
-  // Build feedback section for iterations 2+
   const feedbackSection = feedback ? `
 === PREVIOUS ATTEMPT FAILED (Score: ${feedback.previousScore}/100) ===
 CRITIQUE: ${feedback.critique}
@@ -787,7 +720,6 @@ ${Array.isArray(feedback.lostFeatures) ? feedback.lostFeatures.map(f => `- ${f}`
 PRESERVED (keep these): ${Array.isArray(feedback.preservedFeatures) ? feedback.preservedFeatures.join(', ') : 'Unknown'}
 ` : '';
 
-  // Build critical features section from DNA analysis
   const criticalFeaturesSection = cfTop5.length > 0 ? `
 === CRITICAL STYLE FEATURES TO REPLICATE ===
 ${cfTop5.map((f, i) => `${i + 1}. ${f}`).join('\n')}
@@ -796,7 +728,6 @@ MUST PRESERVE AT ALL COSTS:
 ${cfMustPreserve.length > 0 ? cfMustPreserve.join('\n') : 'All features above'}
 ` : '';
 
-  // Build standard font warning
   const standardFontWarning = !sfd.looksLikeStandardFont ? `
 === WARNING: CUSTOM LOGOTYPE ===
 This is NOT a standard font. It has these unique features:
@@ -805,14 +736,12 @@ DO NOT substitute with any system/standard font like Arial, Helvetica, Gothic, e
 You MUST recreate the custom letterforms exactly.
 ` : '';
 
-  // Build character width guidance
   const widthGuidance = cf.widthDescription ? `
 === CHARACTER WIDTH VARIATION ===
 ${cf.widthDescription}
 Width variance: ${cf.characterWidthVariance || 'natural'}
 ` : '';
 
-  // Visual style section
   const visualStyleSection = `
 === VISUAL STYLE ===
 - Background: ${vs.backgroundColor || 'white'}
@@ -823,7 +752,6 @@ ${vs.hasDropShadow ? '- Has drop shadow' : ''}
 ${vs.has3DEffect ? '- Has 3D effect' : ''}
 `;
 
-  // Fallback to visualDesc if criticalFeatures is empty
   const visualDescKeyChars = Array.isArray(visualDesc.keyCharacteristics) ? visualDesc.keyCharacteristics : [];
   const fallbackSection = cfTop5.length === 0 && visualDesc.overallStyle !== 'Unable to extract' ? `
 === VISUAL DESCRIPTION ===
@@ -860,7 +788,7 @@ Look at the reference image carefully. Your output must look like it was created
     contents: [{
       role: 'user',
       parts: [
-        { inlineData: { mimeType: 'image/png', data: refData } },
+        { inlineData: { mimeType: 'image/png', data: refBase64 } },
         { text: prompt }
       ]
     }],
@@ -872,8 +800,7 @@ Look at the reference image carefully. Your output must look like it was created
   if (response.candidates?.[0]?.content?.parts) {
     for (const part of response.candidates[0].content.parts) {
       if ('inlineData' in part && part.inlineData?.data) {
-        fs.writeFileSync(outputPath, Buffer.from(part.inlineData.data, 'base64'));
-        return;
+        return part.inlineData.data;
       }
     }
   }

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+
+// Note: In a serverless environment, we can't persist feedback to files.
+// For production, this should be connected to a database (e.g., Supabase).
+// For now, we just acknowledge the feedback without persisting it.
 
 export async function POST(request: NextRequest) {
   try {
@@ -10,26 +12,24 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing sessionId or iteration' }, { status: 400 });
     }
 
-    const outputDir = path.join(process.cwd(), '..', 'output', `web_${sessionId}`);
-    const evalJsonPath = path.join(outputDir, 'iterations', `iteration_${String(iteration).padStart(2, '0')}_eval.json`);
-
-    // Check if eval file exists
-    if (!fs.existsSync(evalJsonPath)) {
-      return NextResponse.json({ error: 'Evaluation file not found' }, { status: 404 });
-    }
-
-    // Read existing eval data
-    const evalData = JSON.parse(fs.readFileSync(evalJsonPath, 'utf-8'));
-
-    // Add user feedback
-    evalData.userFeedback = {
-      comment: feedback || '',
-      rating: typeof rating === 'number' ? rating : null,
+    // Log the feedback (for debugging)
+    console.log('[Feedback] Received:', {
+      sessionId,
+      iteration,
+      feedback: feedback?.substring(0, 100),
+      rating,
       timestamp: new Date().toISOString()
-    };
+    });
 
-    // Save back
-    fs.writeFileSync(evalJsonPath, JSON.stringify(evalData, null, 2));
+    // In a production environment, you would save this to a database here.
+    // For example, with Supabase:
+    // await supabase.from('feedback').insert({
+    //   session_id: sessionId,
+    //   iteration,
+    //   feedback,
+    //   rating,
+    //   created_at: new Date().toISOString()
+    // });
 
     return NextResponse.json({ success: true });
   } catch (error) {

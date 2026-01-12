@@ -1,7 +1,5 @@
 import { NextRequest } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 
 const MODELS = {
@@ -98,14 +96,9 @@ export async function POST(request: NextRequest) {
           return;
         }
 
-        const base64Data = referenceImage.split(',')[1];
+        // Extract base64 from data URL
+        const refImageBase64 = referenceImage.split(',')[1];
         const sessionId = crypto.randomUUID();
-        const outputDir = path.join(process.cwd(), '..', 'output', `illust_${sessionId}`);
-        fs.mkdirSync(path.join(outputDir, 'iterations'), { recursive: true });
-        fs.mkdirSync(path.join(outputDir, 'variations'), { recursive: true });
-
-        const refPath = path.join(outputDir, 'reference.png');
-        fs.writeFileSync(refPath, Buffer.from(base64Data, 'base64'));
 
         send({ type: 'session', sessionId });
 
@@ -120,7 +113,7 @@ export async function POST(request: NextRequest) {
 
         let refDNA: IllustrationDNA;
         try {
-          refDNA = await extractIllustrationDNA(ai, refPath);
+          refDNA = await extractIllustrationDNA(ai, refImageBase64);
         } catch (error) {
           console.error('DNA extraction error:', error);
           refDNA = getDefaultIllustrationDNA();
@@ -139,14 +132,9 @@ export async function POST(request: NextRequest) {
           time: dnaTime,
         });
 
-        // Save DNA
-        fs.writeFileSync(
-          path.join(outputDir, 'reference_dna.json'),
-          JSON.stringify({ mode, targetSubject, colorVariationCount, dna: refDNA }, null, 2)
-        );
-
         let bestScore = 0;
         let bestIteration = 0;
+        let bestImageBase64: string | null = null;
 
         // Generate iterations
         for (let iteration = 1; iteration <= maxIterations; iteration++) {
@@ -164,17 +152,12 @@ export async function POST(request: NextRequest) {
             message: `Generating illustration ${iteration}/${maxIterations}...`,
           });
 
-          const iterPath = path.join(
-            outputDir,
-            'iterations',
-            `iteration_${String(iteration).padStart(2, '0')}.png`
-          );
-
           if (isCancelled) break;
 
           const genStartTime = Date.now();
+          let generatedImageBase64: string;
           try {
-            await generateIllustration(ai, refPath, targetSubject, mode, iterPath, refDNA);
+            generatedImageBase64 = await generateIllustration(ai, refImageBase64, targetSubject, mode, refDNA);
           } catch (error) {
             if (isCancelled) break;
             send({ type: 'iteration_error', iteration, message: `Generation failed: ${error}` });
@@ -184,13 +167,12 @@ export async function POST(request: NextRequest) {
 
           if (isCancelled) break;
 
-          const imageBuffer = fs.readFileSync(iterPath);
-          const imageBase64 = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+          const imageUrl = `data:image/png;base64,${generatedImageBase64}`;
 
           send({
             type: 'iteration_image',
             iteration,
-            imageUrl: imageBase64,
+            imageUrl,
             generationTime: genTime,
           });
 
@@ -204,7 +186,7 @@ export async function POST(request: NextRequest) {
           });
 
           const evalStartTime = Date.now();
-          const evaluation = await evaluateIllustration(ai, refPath, iterPath, targetSubject, mode, refDNA);
+          const evaluation = await evaluateIllustration(ai, refImageBase64, generatedImageBase64, targetSubject, mode, refDNA);
           const evalTime = Date.now() - evalStartTime;
 
           if (isCancelled) break;
@@ -220,6 +202,7 @@ export async function POST(request: NextRequest) {
           if (evaluation.score > bestScore) {
             bestScore = evaluation.score;
             bestIteration = iteration;
+            bestImageBase64 = generatedImageBase64;
           }
 
           // Generate color variations for the best iteration so far
@@ -233,9 +216,24 @@ export async function POST(request: NextRequest) {
             });
 
             const variations = generateColorVariations(refDNA.colorPalette, colorVariationCount);
+            const sourceBase64 = bestImageBase64 || generatedImageBase64;
 
             for (const variation of variations) {
               if (isCancelled) break;
+
+              // Skip original (already have it)
+              if (variation.id === 'original') {
+                send({
+                  type: 'color_variation',
+                  iteration,
+                  variation: { 
+                    ...variation, 
+                    status: 'complete', 
+                    imageUrl: `data:image/png;base64,${sourceBase64}` 
+                  },
+                });
+                continue;
+              }
 
               // Send pending variation
               send({
@@ -245,16 +243,15 @@ export async function POST(request: NextRequest) {
               });
 
               try {
-                const varPath = path.join(outputDir, 'variations', `${variation.id}.png`);
-                await generateColorVariationImage(ai, iterPath, variation, varPath);
-
-                const varBuffer = fs.readFileSync(varPath);
-                const varBase64 = `data:image/png;base64,${varBuffer.toString('base64')}`;
-
+                const varImageBase64 = await generateColorVariationImage(ai, sourceBase64, variation);
                 send({
                   type: 'color_variation',
                   iteration,
-                  variation: { ...variation, status: 'complete', imageUrl: varBase64 },
+                  variation: { 
+                    ...variation, 
+                    status: 'complete', 
+                    imageUrl: `data:image/png;base64,${varImageBase64}` 
+                  },
                 });
               } catch (error) {
                 console.error(`Color variation ${variation.id} failed:`, error);
@@ -294,9 +291,7 @@ export async function POST(request: NextRequest) {
 }
 
 // === ILLUSTRATION DNA EXTRACTION ===
-async function extractIllustrationDNA(ai: GoogleGenAI, imagePath: string): Promise<IllustrationDNA> {
-  const imageData = fs.readFileSync(imagePath).toString('base64');
-
+async function extractIllustrationDNA(ai: GoogleGenAI, imageBase64: string): Promise<IllustrationDNA> {
   const prompt = `Analyze this illustration and extract its visual DNA. Focus on:
 1. Color palette - identify the main colors (hex format), temperature, saturation level
 2. Line style - weight, outline style, consistency
@@ -336,7 +331,7 @@ Respond with ONLY a JSON object (no markdown):
         {
           role: 'user',
           parts: [
-            { inlineData: { mimeType: 'image/png', data: imageData } },
+            { inlineData: { mimeType: 'image/png', data: imageBase64 } },
             { text: prompt },
           ],
         },
@@ -413,14 +408,11 @@ function getDefaultIllustrationDNA(): IllustrationDNA {
 // === ILLUSTRATION GENERATION ===
 async function generateIllustration(
   ai: GoogleGenAI,
-  refPath: string,
+  refBase64: string,
   targetSubject: string,
   mode: string,
-  outputPath: string,
   dna: IllustrationDNA
-): Promise<void> {
-  const refData = fs.readFileSync(refPath).toString('base64');
-
+): Promise<string> {
   const modeInstruction =
     mode === 'transform'
       ? `Transform this illustration to depict "${targetSubject}" instead, while preserving the exact same visual style.`
@@ -450,7 +442,7 @@ REQUIREMENTS:
       {
         role: 'user',
         parts: [
-          { inlineData: { mimeType: 'image/png', data: refData } },
+          { inlineData: { mimeType: 'image/png', data: refBase64 } },
           { text: prompt },
         ],
       },
@@ -463,8 +455,7 @@ REQUIREMENTS:
   if (response.candidates?.[0]?.content?.parts) {
     for (const part of response.candidates[0].content.parts) {
       if ('inlineData' in part && part.inlineData?.data) {
-        fs.writeFileSync(outputPath, Buffer.from(part.inlineData.data, 'base64'));
-        return;
+        return part.inlineData.data;
       }
     }
   }
@@ -475,15 +466,12 @@ REQUIREMENTS:
 // === EVALUATION ===
 async function evaluateIllustration(
   ai: GoogleGenAI,
-  refPath: string,
-  genPath: string,
+  refBase64: string,
+  genBase64: string,
   targetSubject: string,
   mode: string,
   refDNA: IllustrationDNA
 ): Promise<{ score: number; generatedDNA: IllustrationDNA }> {
-  const refData = fs.readFileSync(refPath).toString('base64');
-  const genData = fs.readFileSync(genPath).toString('base64');
-
   const prompt = `Compare these two illustrations:
 IMAGE 1 (first): Reference illustration
 IMAGE 2 (second): Generated illustration (should be "${targetSubject}" in ${mode} mode)
@@ -521,8 +509,8 @@ Respond with ONLY JSON:
         {
           role: 'user',
           parts: [
-            { inlineData: { mimeType: 'image/png', data: refData } },
-            { inlineData: { mimeType: 'image/png', data: genData } },
+            { inlineData: { mimeType: 'image/png', data: refBase64 } },
+            { inlineData: { mimeType: 'image/png', data: genBase64 } },
             { text: prompt },
           ],
         },
@@ -750,12 +738,9 @@ function toPastel(hex: string): string {
 // === COLOR VARIATION IMAGE GENERATION ===
 async function generateColorVariationImage(
   ai: GoogleGenAI,
-  sourcePath: string,
-  variation: ColorVariation,
-  outputPath: string
-): Promise<void> {
-  const sourceData = fs.readFileSync(sourcePath).toString('base64');
-
+  sourceBase64: string,
+  variation: ColorVariation
+): Promise<string> {
   const prompt = `Recolor this illustration with the following color scheme:
 - Primary color: ${variation.palette.primary}
 - Secondary colors: ${variation.palette.secondary.join(', ')}
@@ -775,7 +760,7 @@ REQUIREMENTS:
       {
         role: 'user',
         parts: [
-          { inlineData: { mimeType: 'image/png', data: sourceData } },
+          { inlineData: { mimeType: 'image/png', data: sourceBase64 } },
           { text: prompt },
         ],
       },
@@ -788,8 +773,7 @@ REQUIREMENTS:
   if (response.candidates?.[0]?.content?.parts) {
     for (const part of response.candidates[0].content.parts) {
       if ('inlineData' in part && part.inlineData?.data) {
-        fs.writeFileSync(outputPath, Buffer.from(part.inlineData.data, 'base64'));
-        return;
+        return part.inlineData.data;
       }
     }
   }
